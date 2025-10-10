@@ -8,6 +8,9 @@ It contains simple versions of the essential components for
 * and evaluating and creating the submission file (`submission_file.csv`) of that model on the test input data.
 
 Note that all of the components are just starting points, and many aspects can still be improved, see also `README.md`.
+
+This is a custom version of main.py with optimized preprocessing that skips raw file processing
+if preprocessed files already exist.
 """
 
 # Copyright (c) 2025 Robert Bosch GmbH
@@ -78,8 +81,28 @@ RESAMPLE_FREQ_MIN = 10  # the frequency in minutes to resample the raw irregular
 EPS = 1e-6
 TARGET_VARIABLE_NAME = "B205WC000.AM02"  # the target variable to be predicted
 EXAMPLE_PREDICTOR_VARIABLE_NAMES = [
+    #ORIGINAL 2:
     "B205WC000.AM01",  # a supply temperature chilled water
     "B106WS01.AM54",  # an external temperature
+    #abs SPEARMAN above 0.5
+    'B205WC140.AC21',# PRIMARY VALVE 1
+    'B205HW010.PA11',# NUMBER OF STARTS
+    'B205HW020.PA11',# NUMBER OF STARTS
+    'B205WC001.AM71',# TOTAL VOLUME CHILLED WATER
+    #abs SPEARMAN above 0.4
+    'B205WC000.AM71',# VOLUME CHILLED WATER BP201/202/206
+    #abs SPEARMAN above 0.3
+    'B205HP110.AM55_3',# ACTUAL CAPACITY
+    'B205WC030.AC63',# SETPOINT CHILLED WATER PUMP
+    'B205WC030.AM51_4',# RUN ENABLED
+    'B205WC030.AM53_1',# EVAPORATOR FLOW SWITCH STATUS
+    'B205WC002.RA001',# SPEED CHILLED WATER PUMP
+    'B205HW000.PA72',# VOLUME FEEDING HOT WATER SYSTEM
+    'B205HW020.AC62',# SPEED SECONDARY PUMP
+    'B205WC010.AM51_4',# RUN ENABLED
+    'B205WC010.AM51_3',# CHILLER STATE
+    'B205WC100.DM091_1',# HEAT PUMP HP110 READY - HEATING
+    'B205WC000.DM90',# MAX. TEMP. CHILLED WATER
 ]  # example predictor variables
 SUBMISSION_FILE_PATH = f"{OUTPUTS_DIR}/submission_file.csv"
 SUBMISSION_FILE_TARGET_VARIABLE_COLUMN_NAME = "TARGET_VARIABLE"
@@ -524,18 +547,62 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn):
     return model
 
 
+def check_preprocessed_files_exist():
+    """Check if both preprocessed files exist in the outputs directory.
+    
+    Returns:
+        bool: True if both files exist, False otherwise
+    """
+    train_file = f"{OUTPUTS_DIR}/preproc_full_train_df.parquet"
+    test_file = f"{OUTPUTS_DIR}/preproc_test_input_df.parquet"
+    
+    train_exists = os.path.exists(train_file)
+    test_exists = os.path.exists(test_file)
+    
+    if train_exists and test_exists:
+        print("Both preprocessed files found:")
+        print(f"  - {train_file}")
+        print(f"  - {test_file}")
+        print("Skipping raw file processing and loading preprocessed data directly.")
+        return True
+    else:
+        if not train_exists:
+            print(f"Preprocessed train file not found: {train_file}")
+        if not test_exists:
+            print(f"Preprocessed test file not found: {test_file}")
+        print("Will process raw files...")
+        return False
+
+
 if __name__ == "__main__":
-    # Load raw data and prepare it into multivariate dataframes, and create dir for later outputs:
+    # Create outputs directory
     os.makedirs(OUTPUTS_DIR, exist_ok=True)
-    full_train_df = simple_load_and_resample_data(
-        TRAIN_DATA_FILE_PATHS,
-        generate_sample_plots=[TARGET_VARIABLE_NAME] + EXAMPLE_PREDICTOR_VARIABLE_NAMES,
-        save_load_df=f"{OUTPUTS_DIR}/preproc_full_train_df.parquet",
-    )
-    test_input_df = simple_load_and_resample_data(
-        TEST_INPUT_DATA_FILE_PATHS,
-        save_load_df=f"{OUTPUTS_DIR}/preproc_test_input_df.parquet",
-    )
+    
+    # Check if preprocessed files already exist
+    preprocessed_files_exist = check_preprocessed_files_exist()
+    
+    if preprocessed_files_exist:
+        # Load preprocessed data directly
+        print("Loading preprocessed train data...")
+        full_train_df = pd.read_parquet(f"{OUTPUTS_DIR}/preproc_full_train_df.parquet")
+        
+        print("Loading preprocessed test data...")
+        test_input_df = pd.read_parquet(f"{OUTPUTS_DIR}/preproc_test_input_df.parquet")
+        
+        print("Preprocessed data loaded successfully.")
+    else:
+        # Process raw data as usual
+        print("Processing raw data files...")
+        full_train_df = simple_load_and_resample_data(
+            TRAIN_DATA_FILE_PATHS,
+            generate_sample_plots=[TARGET_VARIABLE_NAME] + EXAMPLE_PREDICTOR_VARIABLE_NAMES,
+            save_load_df=f"{OUTPUTS_DIR}/preproc_full_train_df.parquet",
+        )
+        test_input_df = simple_load_and_resample_data(
+            TEST_INPUT_DATA_FILE_PATHS,
+            save_load_df=f"{OUTPUTS_DIR}/preproc_test_input_df.parquet",
+        )
+    
     tzinfo = full_train_df.index.tzinfo
 
     # Turn it into torch datasets for simple prediction from past to future, with simple features:
