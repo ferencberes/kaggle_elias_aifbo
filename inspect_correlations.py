@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Inspect correlations between sensors in a building.
+Inspect correlations between sensors across multiple buildings and time periods.
 
-This script loads sensor data from a specified building and measures the 
+This script loads sensor data from specified buildings and measures the 
 Spearman correlation of resampled time series data with a specified target sensor.
+Supports analysis across multiple months and buildings.
 """
 
 import pandas as pd
@@ -14,6 +15,68 @@ import glob
 from scipy.stats import spearmanr
 from typing import Dict, List, Tuple, Optional
 import warnings
+from datetime import datetime
+
+def validate_and_parse_month(month_str: str) -> str:
+    """
+    Validate and parse month string in YYYY-MM format.
+    
+    Args:
+        month_str: Month string in YYYY-MM format
+        
+    Returns:
+        str: Validated month string in YYYY-MM format
+        
+    Raises:
+        ValueError: If format is invalid or date is out of supported range
+    """
+    try:
+        # Parse the date to validate format
+        parsed_date = datetime.strptime(month_str, '%Y-%m')
+        
+        # Check if it's within the supported range (2025-01 to 2025-07)
+        if parsed_date > datetime(2025, 7, 31):
+            raise ValueError(f"Month {month_str} is outside supported range (up to 2025-07)")
+            
+        return month_str
+    except ValueError as e:
+        if "time data" in str(e):
+            raise ValueError(f"Invalid month format: {month_str}. Expected format: YYYY-MM")
+        else:
+            raise e
+
+def generate_month_range(start_month: str, end_month: str) -> List[str]:
+    """
+    Generate list of month strings from start to end month.
+    
+    Args:
+        start_month: Start month in YYYY-MM format
+        end_month: End month in YYYY-MM format
+        
+    Returns:
+        List[str]: List of month strings in RBHU-YYYY-MM format
+    """
+    start_date = datetime.strptime(start_month, '%Y-%m')
+    end_date = datetime.strptime(end_month, '%Y-%m')
+    
+    if start_date > end_date:
+        raise ValueError(f"Start month ({start_month}) cannot be after end month ({end_month})")
+    
+    months = []
+    current_date = start_date
+    
+    while current_date <= end_date:
+        # Convert to RBHU format (RBHU-YYYY-MM)
+        month_str = f"RBHU-{current_date.strftime('%Y-%m')}"
+        months.append(month_str)
+        
+        # Move to next month
+        if current_date.month == 12:
+            current_date = current_date.replace(year=current_date.year + 1, month=1)
+        else:
+            current_date = current_date.replace(month=current_date.month + 1)
+    
+    return months
 
 def load_metadata(data_dir: str) -> pd.DataFrame:
     """Load the metadata parquet file."""
@@ -22,30 +85,133 @@ def load_metadata(data_dir: str) -> pd.DataFrame:
         raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
     return pd.read_parquet(metadata_path)
 
-def get_building_sensors(metadata: pd.DataFrame, building: str) -> List[str]:
-    """Get all sensor IDs for a specific building."""
-    building_metadata = metadata[metadata['building'] == building]
+def get_building_sensors(metadata: pd.DataFrame, buildings: List[str]) -> List[str]:
+    """Get all sensor IDs for the specified buildings."""
+    building_metadata = metadata[metadata['building'].isin(buildings)]
     return building_metadata['object_id'].tolist()
 
-def load_sensor_data(data_dir: str, building: str, sensor_id: str) -> Optional[pd.DataFrame]:
-    """Load time series data for a specific sensor."""
-    # Construct the path based on the structure seen in FirstLook.ipynb
-    sensor_path = os.path.join(data_dir, 'RBHU-2025-01', 'RBHU', building, f'{sensor_id}.parquet')
+def explore_building_structure(data_dir: str, month: str, building: str) -> None:
+    """
+    Debug function to explore and print the folder structure of a building.
     
-    if not os.path.exists(sensor_path):
-        print(f"Warning: Sensor data not found for {sensor_id} at {sensor_path}")
+    Args:
+        data_dir: Base data directory
+        month: Month string (e.g., 'RBHU-2025-01')
+        building: Building identifier (e.g., 'B201', 'B205', 'B106')
+    """
+    building_base_path = os.path.join(data_dir, month, 'RBHU', building)
+    
+    if not os.path.exists(building_base_path):
+        print(f"Building path does not exist: {building_base_path}")
+        return
+    
+    print(f"Exploring structure for {building} in {month}:")
+    
+    # Walk through all subdirectories and list parquet files
+    for root, dirs, files in os.walk(building_base_path):
+        parquet_files = [f for f in files if f.endswith('.parquet')]
+        if parquet_files:
+            relative_path = os.path.relpath(root, building_base_path)
+            if relative_path == '.':
+                print(f"  Direct files: {len(parquet_files)} parquet files")
+            else:
+                print(f"  Subfolder '{relative_path}': {len(parquet_files)} parquet files")
+
+def find_sensor_files(data_dir: str, month: str, building: str, sensor_id: str) -> List[str]:
+    """
+    Find all instances of a sensor file across different folder structures.
+    
+    Args:
+        data_dir: Base data directory
+        month: Month string (e.g., 'RBHU-2025-01')
+        building: Building identifier (e.g., 'B201', 'B205', 'B106')
+        sensor_id: Sensor ID to search for
+        
+    Returns:
+        List of paths to matching sensor files
+    """
+    sensor_files = []
+    building_base_path = os.path.join(data_dir, month, 'RBHU', building)
+    
+    if not os.path.exists(building_base_path):
+        return sensor_files
+    
+    # Use glob to recursively search for the sensor file
+    search_pattern = os.path.join(building_base_path, '**', f'{sensor_id}.parquet')
+    matching_files = glob.glob(search_pattern, recursive=True)
+    
+    # Also check direct path (for buildings like B106, B205)
+    direct_path = os.path.join(building_base_path, f'{sensor_id}.parquet')
+    if os.path.exists(direct_path) and direct_path not in matching_files:
+        matching_files.append(direct_path)
+    
+    return matching_files
+
+def load_sensor_data(data_dir: str, buildings: List[str], sensor_id: str, start_month: str, end_month: str, verbose: bool = False) -> Optional[pd.DataFrame]:
+    """Load time series data for a specific sensor from multiple buildings and months."""
+    dataframes = []
+    
+    # Validate and generate month strings
+    validate_and_parse_month(start_month)
+    validate_and_parse_month(end_month)
+    months = generate_month_range(start_month, end_month)
+    
+    total_files_found = 0
+    total_files_loaded = 0
+    
+    for month in months:
+        for building in buildings:
+            # Find all instances of the sensor file in the building folder structure
+            sensor_files = find_sensor_files(data_dir, month, building, sensor_id)
+            total_files_found += len(sensor_files)
+            
+            if verbose and sensor_files:
+                print(f"Found {len(sensor_files)} files for {sensor_id} in {building}/{month}")
+            
+            for sensor_path in sensor_files:
+                try:
+                    df = pd.read_parquet(sensor_path)
+                    # Ensure the dataframe has the expected columns
+                    if 'time' not in df.columns or 'data' not in df.columns:
+                        print(f"Warning: Expected columns 'time' and 'data' not found in {sensor_id} at {sensor_path}")
+                        continue
+                    
+                    # Check for empty dataframe
+                    if df.empty:
+                        print(f"Warning: Empty dataframe for {sensor_id} at {sensor_path}")
+                        continue
+                        
+                    dataframes.append(df)
+                    total_files_loaded += 1
+                    
+                    if verbose:
+                        print(f"Successfully loaded {sensor_id} from {sensor_path} ({len(df)} rows)")
+                        
+                except Exception as e:
+                    print(f"Error loading {sensor_id} from {sensor_path}: {e}")
+                    continue
+    
+    if verbose:
+        print(f"Summary for {sensor_id}: Found {total_files_found} files, successfully loaded {total_files_loaded}")
+    
+    if not dataframes:
+        print(f"Warning: No sensor data found for {sensor_id} in any of the specified buildings and months")
         return None
     
-    try:
-        df = pd.read_parquet(sensor_path)
-        # Ensure the dataframe has the expected columns
-        if 'time' not in df.columns or 'data' not in df.columns:
-            print(f"Warning: Expected columns 'time' and 'data' not found in {sensor_id}")
-            return None
-        return df
-    except Exception as e:
-        print(f"Error loading {sensor_id}: {e}")
-        return None
+    # Concatenate all dataframes and sort by time
+    combined_df = pd.concat(dataframes, ignore_index=True)
+    combined_df['time'] = pd.to_datetime(combined_df['time'])
+    combined_df = combined_df.sort_values('time').reset_index(drop=True)
+    
+    # Remove duplicates if any (in case the same file was found multiple times)
+    initial_rows = len(combined_df)
+    combined_df = combined_df.drop_duplicates(subset=['time']).reset_index(drop=True)
+    final_rows = len(combined_df)
+    
+    if verbose and initial_rows != final_rows:
+        print(f"Removed {initial_rows - final_rows} duplicate rows for {sensor_id}")
+    
+    return combined_df
 
 def resample_data(df: pd.DataFrame, freq: str) -> pd.DataFrame:
     """Resample time series data to specified frequency with interpolation."""
@@ -96,35 +262,42 @@ def calculate_spearman_correlation(target_data: pd.DataFrame, sensor_data: pd.Da
         print(f"Error calculating correlation: {e}")
         return None
 
-def analyze_correlations(data_dir: str, building: str, target_sensor: str, resample_freq: str = '1min', target_shift_minutes: int = 0) -> Dict[str, float]:
+def analyze_correlations(data_dir: str, buildings: List[str], target_sensor: str, start_month: str, end_month: str, resample_freq: str = '1min', target_shift_minutes: int = 0, verbose: bool = False) -> Dict[str, float]:
     """
-    Analyze correlations between target sensor and all other sensors in the building.
+    Analyze correlations between target sensor and all other sensors in the specified buildings.
     
     Args:
         data_dir: Path to the data directory
-        building: Building identifier (e.g., 'B205')
+        buildings: List of building identifiers (e.g., ['B205', 'B106'])
         target_sensor: Target sensor ID (e.g., 'B205WC000.AM02')
+        start_month: Start month for analysis (format: YYYY-MM)
+        end_month: End month for analysis (format: YYYY-MM)
         resample_freq: Resampling frequency (default: '1min')
         target_shift_minutes: Minutes to shift target data for future correlation analysis (default: 0)
     
     Returns:
         Dictionary mapping sensor IDs to their correlation with the target sensor
     """
-    print(f"Analyzing correlations for building {building}")
+    print(f"Analyzing correlations for buildings: {', '.join(buildings)}")
     print(f"Target sensor: {target_sensor}")
+    print(f"Month range: {start_month} to {end_month}")
     print(f"Resampling frequency: {resample_freq}")
     print(f"Target shift: {target_shift_minutes} minutes")
     print("-" * 50)
     
+    # Validate month range (validation will be done in load_sensor_data)
+    validate_and_parse_month(start_month)
+    validate_and_parse_month(end_month)
+    
     # Load metadata
     metadata = load_metadata(data_dir)
     
-    # Get all sensors for the building
-    building_sensors = get_building_sensors(metadata, building)
-    print(f"Found {len(building_sensors)} sensors in building {building}")
+    # Get all sensors for the buildings
+    building_sensors = get_building_sensors(metadata, buildings)
+    print(f"Found {len(building_sensors)} sensors across {len(buildings)} buildings")
     
     # Load and resample target sensor data
-    target_data = load_sensor_data(data_dir, building, target_sensor)
+    target_data = load_sensor_data(data_dir, buildings, target_sensor, start_month, end_month, verbose)
     if target_data is None:
         raise ValueError(f"Could not load target sensor data: {target_sensor}")
     
@@ -139,7 +312,7 @@ def analyze_correlations(data_dir: str, building: str, target_sensor: str, resam
         if sensor_id == target_sensor:
             continue  # Skip self-correlation
         
-        sensor_data = load_sensor_data(data_dir, building, sensor_id)
+        sensor_data = load_sensor_data(data_dir, buildings, sensor_id, start_month, end_month, verbose)
         if sensor_data is None:
             continue
         
@@ -181,13 +354,17 @@ def print_results(correlations: Dict[str, float], top_n: int = 10):
     print(f"Min correlation: {np.min(correlations_values):.4f}")
 
 def main():
-    parser = argparse.ArgumentParser(description='Analyze sensor correlations in a building')
+    parser = argparse.ArgumentParser(description='Analyze sensor correlations across multiple buildings and time periods')
     parser.add_argument('--data-dir', default='data/kaggle_dl', 
                        help='Path to the data directory (default: data/kaggle_dl)')
-    parser.add_argument('--building', required=True,
-                       help='Building identifier (e.g., B205)')
+    parser.add_argument('--buildings', nargs='+', required=True,
+                       help='Building identifiers (e.g., B205 B106) - supports multiple buildings')
     parser.add_argument('--target-sensor', required=True,
                        help='Target sensor ID (e.g., B205WC000.AM02)')
+    parser.add_argument('--start-month', type=str, default='2025-01',
+                       help='Start month for analysis (format: YYYY-MM, default: 2025-01)')
+    parser.add_argument('--end-month', type=str, default='2025-01',
+                       help='End month for analysis (format: YYYY-MM, default: 2025-01)')
     parser.add_argument('--resample-freq', default='1min',
                        help='Resampling frequency (default: 1min)')
     parser.add_argument('--top-n', type=int, default=10,
@@ -196,17 +373,35 @@ def main():
                        help='Shift target variable by specified minutes to measure correlation with future values (default: 0)')
     parser.add_argument('--output', type=str, default=None,
                        help='Output CSV file to save results (optional)')
+    parser.add_argument('--debug-structure', action='store_true',
+                       help='Enable debug mode to explore building folder structures')
+    parser.add_argument('--verbose', action='store_true',
+                       help='Enable verbose output for detailed loading information')
     
     args = parser.parse_args()
     
     try:
+        # If debug mode is enabled, explore building structures first
+        if args.debug_structure:
+            print("=== DEBUG: Exploring building structures ===")
+            validate_and_parse_month(args.start_month)
+            months = generate_month_range(args.start_month, args.start_month)  # Just check first month
+            for month in months[:1]:  # Only check first month for debugging
+                for building in args.buildings:
+                    explore_building_structure(args.data_dir, month, building)
+                    print()
+            print("=== End debug exploration ===\n")
+        
         # Analyze correlations
         correlations = analyze_correlations(
             args.data_dir, 
-            args.building, 
-            args.target_sensor, 
+            args.buildings, 
+            args.target_sensor,
+            args.start_month,
+            args.end_month,
             args.resample_freq,
-            args.target_shift_minutes
+            args.target_shift_minutes,
+            args.verbose
         )
 
         # Print results

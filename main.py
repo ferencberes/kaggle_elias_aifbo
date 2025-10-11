@@ -19,6 +19,7 @@ if preprocessed files already exist.
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+import argparse
 import csv
 from datetime import datetime
 import glob
@@ -32,13 +33,49 @@ from torch.utils.data import DataLoader, TensorDataset
 import matplotlib.pyplot as plt
 import torchvision
 from tqdm import tqdm
+import wandb
 
-torch.manual_seed(0)
-torch.set_default_device("cuda" if torch.cuda.is_available() else "cpu")
-print(torch.get_default_device())
-torch.set_default_dtype(
-    torch.float64
-)  # with lower than float64 precision, the eventual timestamps may be off
+def setup_device(device_arg):
+    """Setup device based on argument.
+    
+    Args:
+        device_arg: Device specification (None, 'cpu', 'cuda', 'cuda:0', etc.)
+    
+    Returns:
+        str: The device string to use
+    """
+    if device_arg is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    else:
+        device = device_arg
+        # Validate device
+        if device.startswith('cuda') and not torch.cuda.is_available():
+            print(f"Warning: CUDA requested but not available. Falling back to CPU.")
+            device = "cpu"
+    
+    return device
+
+def setup_wandb():
+    """Setup wandb authentication and return API key status.
+    
+    Returns:
+        bool: True if wandb is successfully set up, False otherwise
+    """
+    try:
+        # Try to read API key from file
+        api_key_file = "wandb_api_key.txt"
+        if os.path.exists(api_key_file):
+            with open(api_key_file, 'r') as f:
+                api_key = f.read().strip()
+            wandb.login(key=api_key)
+            print("Successfully logged into wandb using API key from file")
+            return True
+        else:
+            print(f"Warning: {api_key_file} not found. Proceeding without wandb logging.")
+            return False
+    except Exception as e:
+        print(f"Warning: Failed to setup wandb: {e}. Proceeding without wandb logging.")
+        return False
 
 
 DATA_DIR = "data"
@@ -90,19 +127,19 @@ EXAMPLE_PREDICTOR_VARIABLE_NAMES = [
     'B205HW020.PA11',# NUMBER OF STARTS
     'B205WC001.AM71',# TOTAL VOLUME CHILLED WATER
     #abs SPEARMAN above 0.4
-    'B205WC000.AM71',# VOLUME CHILLED WATER BP201/202/206
+    #'B205WC000.AM71',# VOLUME CHILLED WATER BP201/202/206
     #abs SPEARMAN above 0.3
-    'B205HP110.AM55_3',# ACTUAL CAPACITY
-    'B205WC030.AC63',# SETPOINT CHILLED WATER PUMP
-    'B205WC030.AM51_4',# RUN ENABLED
-    'B205WC030.AM53_1',# EVAPORATOR FLOW SWITCH STATUS
-    'B205WC002.RA001',# SPEED CHILLED WATER PUMP
-    'B205HW000.PA72',# VOLUME FEEDING HOT WATER SYSTEM
-    'B205HW020.AC62',# SPEED SECONDARY PUMP
-    'B205WC010.AM51_4',# RUN ENABLED
-    'B205WC010.AM51_3',# CHILLER STATE
-    'B205WC100.DM091_1',# HEAT PUMP HP110 READY - HEATING
-    'B205WC000.DM90',# MAX. TEMP. CHILLED WATER
+    #'B205HP110.AM55_3',# ACTUAL CAPACITY
+    #'B205WC030.AC63',# SETPOINT CHILLED WATER PUMP
+    #'B205WC030.AM51_4',# RUN ENABLED
+    #'B205WC030.AM53_1',# EVAPORATOR FLOW SWITCH STATUS
+    #'B205WC002.RA001',# SPEED CHILLED WATER PUMP
+    #'B205HW000.PA72',# VOLUME FEEDING HOT WATER SYSTEM
+    #'B205HW020.AC62',# SPEED SECONDARY PUMP
+    #'B205WC010.AM51_4',# RUN ENABLED
+    #'B205WC010.AM51_3',# CHILLER STATE
+    #'B205WC100.DM091_1',# HEAT PUMP HP110 READY - HEATING
+    #'B205WC000.DM90',# MAX. TEMP. CHILLED WATER
     #abs SPEARMAN above 0.2 - model overfitted for these
     #'B205HW020.AM72',# CURRENT POWER
     #'B205HW020.VT01_1',# REQ. TEMPERATURE SETPOINT - BOSCH TT
@@ -497,10 +534,16 @@ def simple_feature_dataset(
     return dataset, info
 
 
-def simple_model_and_train(train_loader, vali_loader, loss_fn):
+def simple_model_and_train(train_loader, vali_loader, loss_fn, use_wandb=False):
     """Define a simple prediction model and train it on the given training data loader.
 
     Important: to be adapted for actual models for competition.
+    
+    Args:
+        train_loader: Training data loader
+        vali_loader: Validation data loader  
+        loss_fn: Loss function to use
+        use_wandb: Whether to log metrics to wandb
     """
 
     class SimpleAIFBOModel(nn.Module):
@@ -564,6 +607,15 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn):
             f"Train Loss Epoch: {avg_train_loss_epoch:.5f}. "
             f"Vali Loss: {avg_vali_loss:.5f}"
         )
+        
+        # Log metrics to wandb
+        if use_wandb:
+            wandb.log({
+                "epoch": epoch,
+                "train_loss_running": avg_train_loss_running.item(),
+                "train_loss_epoch": avg_train_loss_epoch.item(),
+                "validation_loss": avg_vali_loss.item(),
+            })
 
     return model
 
@@ -596,6 +648,46 @@ def check_preprocessed_files_exist():
 
 
 if __name__ == "__main__":
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='ELIAS Bosch AI for Building Optimisation prediction')
+    parser.add_argument('--device', type=str, default=None,
+                       help='Device to use for computation (default: auto-detect, options: cpu, cuda, cuda:0, etc.)')
+    args = parser.parse_args()
+    
+    # Setup device and torch configuration
+    device = setup_device(args.device)
+
+    torch.manual_seed(0)
+    torch.set_default_device(device)
+    print(f"Using device: {torch.get_default_device()}")
+    torch.set_default_dtype(
+        torch.float64
+    )  # with lower than float64 precision, the eventual timestamps may be off
+    
+    # Setup wandb logging
+    use_wandb = setup_wandb()
+    #print(f"Using wandb logging: {use_wandb}")
+    if use_wandb:
+        wandb.init(
+            project="kaggle-energy",
+            name=f"training-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+            config={
+                "device": str(torch.get_default_device()),
+                "target_variable": TARGET_VARIABLE_NAME,
+                "predictor_variables": EXAMPLE_PREDICTOR_VARIABLE_NAMES,
+                "num_predictor_variables": len(EXAMPLE_PREDICTOR_VARIABLE_NAMES),
+                "resample_freq_min": RESAMPLE_FREQ_MIN,
+                "eps": EPS,
+                "random_seed": 0,
+                "torch_dtype": str(torch.get_default_dtype()),
+                "data_dir": DATA_DIR,
+                "outputs_dir": OUTPUTS_DIR,
+                "test_start_datetime": TEST_START_DATETIME.isoformat(),
+                #"submission_file_path": SUBMISSION_FILE_PATH,
+            },
+            tags=["pytorch", "timeseries", "building-optimization", "kaggle"]
+        )
+    
     # Create outputs directory
     os.makedirs(OUTPUTS_DIR, exist_ok=True)
     
@@ -653,7 +745,7 @@ if __name__ == "__main__":
 
     # Define loss function, model, and perform training:
     loss_fn = nn.MSELoss()
-    model = simple_model_and_train(train_loader, vali_loader, loss_fn)
+    model = simple_model_and_train(train_loader, vali_loader, loss_fn, use_wandb)
 
     # Evaluate model on train, validation, and test data, create plots, and create final prediction submission
     # dataframe (with datetime annotation), and save it as submission file CSV:
@@ -688,11 +780,35 @@ if __name__ == "__main__":
     )
     test_prediction_df_for_csv.index.name = "ID"
     
+    # Log final evaluation metrics to wandb
+    if use_wandb:
+        wandb.log({
+            "final_train_loss": res_eval_train["avg_loss"].item(),
+            "final_validation_loss": res_eval_vali["avg_loss"].item(),
+            "num_predictions": len(test_prediction_df),
+        })
+        
+        # Log model configuration
+        sample_batch, _ = next(iter(train_loader))
+        wandb.config.update({
+            "input_size": sample_batch.shape[-1] - 1,  # subtract 1 for timestamp
+            "model_architecture": "SimpleAIFBOModel",
+            "optimizer": "Adam",
+            "learning_rate": 2.5e-4,
+            "num_epochs": 200,
+            "batch_size": 64,
+            "loss_function": "MSELoss",
+        })
+    
     # write the submission file that can then be uploaded to the competition page:
     test_prediction_df_for_csv.to_csv(
         SUBMISSION_FILE_PATH,
         index=True,
         quoting=csv.QUOTE_ALL,
     )
+    
+    # Finalize wandb logging
+    if use_wandb:
+        wandb.finish()
 
     print("Done.")
