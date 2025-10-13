@@ -82,15 +82,15 @@ DATA_DIR = "data"
 OUTPUTS_DIR = "outputs"
 TRAIN_DATA_FILE_PATHS = list(
     chain(
-        glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-2024-06/RBHU/**/*.parquet", recursive=True
-        ),
-        glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-2024-07/RBHU/**/*.parquet", recursive=True
-        ),
-        glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-2024-08/RBHU/**/*.parquet", recursive=True
-        ),
+        #glob.glob(
+        #    f"{DATA_DIR}/kaggle_dl/RBHU-2024-06/RBHU/**/*.parquet", recursive=True
+        #),
+        #glob.glob(
+        #    f"{DATA_DIR}/kaggle_dl/RBHU-2024-07/RBHU/**/*.parquet", recursive=True
+        #),
+        #glob.glob(
+        #    f"{DATA_DIR}/kaggle_dl/RBHU-2024-08/RBHU/**/*.parquet", recursive=True
+        #),
         glob.glob(
             f"{DATA_DIR}/kaggle_dl/RBHU-2025-01/RBHU/**/*.parquet", recursive=True
         ),

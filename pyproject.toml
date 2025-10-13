@@ -15,8 +15,10 @@ dependencies = [
     "pandas>=2.3.0",
     "pyarrow>=20.0.0",
     "ruff>=0.12.1",
+    "scikit-learn>=1.5.0",
     "torch>=2.7.1",
     "torchvision>=0.22.1",
     "tqdm>=4.67.1",
     "wandb>=0.18.0",
+    "xgboost>=2.0.0",
 ]
