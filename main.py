@@ -131,24 +131,21 @@ EXAMPLE_PREDICTOR_VARIABLE_NAMES = [
     #ORIGINAL 2:
     "B205WC000.AM01",  # a supply temperature chilled water
     "B106WS01.AM54",  # an external temperature
-    #Lasso selected top 10:
-    "B205WC140.AC21",
-    "B205WC030.AM55_3",
-    "B201AH162.AC21",
-    "B205WC002.RA001",
-    "B205WC001.DM82_1",
-    "B201AH661.AM45",
-    "B201RC031.RA61_3",
-    "B201RC032.AM01",
-    "B201RC144.AM01",
-    "B205HW001.AM71",
-    "B201RC370.AM01",
-    "B201FC573_2.VS01_1",
-    "B201RC031.AC43",
-    "B201RC315.AM21",
-    "B201WD100.AM03",
-    "B201RC207.AM01"
-]  # example predictor variables
+    #abova 0.4 spcorr
+    #'B205WC140.AC21',# PRIMARY VALVE 1
+    #'B205HW010.PA11',# NUMBER OF STARTS
+    #'B205HW020.PA11',# NUMBER OF STARTS
+    #'B205WC001.AM71',# TOTAL VOLUME CHILLED WATER
+    #'B205WC000.AM71',# VOLUME CHILLED WATER BP201/202/206
+    # same num best lasso weights:
+    'B205WC140.AC21',# PRIMARY VALVE 1
+    'B205WC030.AM55_3',# ACTUAL CAPACITY
+    'B201AH162.AC21',# COOLER VALVE
+    'B205WC002.RA001',# SPEED CHILLED WATER PUMP
+    'B205WC001.DM82_1',# FAULT DIFF-PRESSURE FILTER 2
+]
+
+EXAMPLE_PREDICTOR_VARIABLE_NAMES = list(set(EXAMPLE_PREDICTOR_VARIABLE_NAMES))# remove duplicates
 SUBMISSION_FILE_PATH = f"{OUTPUTS_DIR}/submission_file.csv"
 SUBMISSION_FILE_TARGET_VARIABLE_COLUMN_NAME = "TARGET_VARIABLE"
 SUBMISSION_FILE_DATETIME_FORMAT = "%Y-%m-%d_%H:%M:%S"
@@ -219,14 +216,14 @@ def simple_load_and_resample_data(
             1,
             sharex=True,
             dpi=500,
-            figsize=(10, 2 * n_plots)
+            figsize=(10, 4 * n_plots)
         )
         plt.title("Input data timeseries")
         for i, col in enumerate(generate_sample_plots):
             axs[i].plot(multivariate_timeseries_df[col], label=col, linewidth=0.75)
             axs[i].tick_params(axis="x", labelrotation=90)
             axs[i].legend(fontsize="small")
-        plt.savefig(f"{OUTPUTS_DIR}/input_data_sample_timeseries_plot.png")
+        plt.savefig(f"{OUTPUTS_DIR}/input_data_sample_timeseries_plot.png", bbox_inches="tight")
         plt.close(fig)
 
     if save_load_df and save:
@@ -343,7 +340,7 @@ def simple_eval_and_submission_creation(
                 ax.plot(ys_pred_df, label="pred", alpha=0.75, linewidth=0.75)
                 ax.tick_params(axis="x", labelrotation=90)
                 ax.legend(fontsize="small")
-                plt.savefig(save_fig)
+                plt.savefig(save_fig, bbox_inches="tight")
                 plt.close(fig)
             if create_submission_df:
                 if create_submission_df == True:
@@ -612,80 +609,79 @@ def simple_feature_dataset(
     X = []
     Y = []
     for i in range(0, data.shape[0] - input_seq_len - predict_ahead, stride):
+        selected_features = []
+        
         timestamp = data[
             i + input_seq_len + predict_ahead, column_names.get_loc("timestamp")
         ].unsqueeze(0)
+        selected_features.append(timestamp)
 
-        example_predictor_variable_0 = normalization_fn(
+        for predictor in EXAMPLE_PREDICTOR_VARIABLE_NAMES:
+            if not predictor in column_names:
+                raise ValueError(
+                    f"Predictor variable {predictor} not found in data columns."
+                )
+            predictor_values = normalization_fn(
             data[
                 i : i + input_seq_len : input_seq_step,
-                column_names.get_loc(EXAMPLE_PREDICTOR_VARIABLE_NAMES[0]),
+                column_names.get_loc(predictor),
             ],
-            EXAMPLE_PREDICTOR_VARIABLE_NAMES[0],
+            predictor,
         )
-        example_predictor_variable_1 = normalization_fn(
-            data[
-                i : i + input_seq_len : input_seq_step,
-                column_names.get_loc(EXAMPLE_PREDICTOR_VARIABLE_NAMES[1]),
-            ],
-            EXAMPLE_PREDICTOR_VARIABLE_NAMES[1],
-        )
+        selected_features.append(predictor_values)
+
         daytime_sin = data[
             i + input_seq_len + predict_ahead, column_names.get_loc("daytime_sin")
         ].unsqueeze(0)
+        selected_features.append(daytime_sin)
+        
         daytime_cos = data[
             i + input_seq_len + predict_ahead, column_names.get_loc("daytime_cos")
         ].unsqueeze(0)
+        selected_features.append(daytime_cos)
+
         day_of_week = torch.nn.functional.one_hot(
             data[
                 i + input_seq_len + predict_ahead, column_names.get_loc("day_of_week")
             ].to(dtype=torch.long),
             num_classes=7,
         )
+        selected_features.append(day_of_week)
+
         yeartime_sin = data[
             i + input_seq_len + predict_ahead, column_names.get_loc("yeartime_sin")
         ].unsqueeze(0)
+        selected_features.append(yeartime_sin)
         yeartime_cos = data[
             i + input_seq_len + predict_ahead, column_names.get_loc("yeartime_cos")
         ].unsqueeze(0)
-
+        selected_features.append(yeartime_cos)  
+        
+        """
         weektime_sin = data[
             i + input_seq_len + predict_ahead, column_names.get_loc("weektime_sin")
         ].unsqueeze(0)
+        selected_features.append(weektime_sin)
         weektime_cos = data[
             i + input_seq_len + predict_ahead, column_names.get_loc("weektime_cos")
         ].unsqueeze(0)
-
+        selected_features.append(weektime_sin)
+        
         is_hungarian_holiday = data[
             i + input_seq_len + predict_ahead, column_names.get_loc("is_hungarian_holiday")
         ].unsqueeze(0)
+        selected_features.append(is_hungarian_holiday)
         is_working_day = data[
             i + input_seq_len + predict_ahead, column_names.get_loc("is_working_day")
         ].unsqueeze(0)
+        selected_features.append(is_working_day)
         is_weekend = data[
             i + input_seq_len + predict_ahead, column_names.get_loc("is_weekend")
         ].unsqueeze(0)
+        selected_features.append(is_weekend)
+        """
 
-        X.append(
-            #TODO: include all descriptor variables NOT just first two!!!
-            torch.cat(
-                [
-                    timestamp,
-                    example_predictor_variable_0,
-                    example_predictor_variable_1,
-                    day_of_week,
-                    yeartime_sin,
-                    yeartime_cos,
-                    daytime_sin,
-                    daytime_cos,
-                    #weektime_sin,
-                    #weektime_cos,
-                    is_hungarian_holiday,
-                    is_working_day,
-                    is_weekend,
-                ]
-            )
-        )
+        X.append(torch.cat(selected_features))
 
         target_variable = data[
             i + input_seq_len + predict_ahead,
