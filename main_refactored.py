@@ -131,6 +131,9 @@ EXAMPLE_PREDICTOR_VARIABLE_NAMES = [
     #ORIGINAL 2:
     "B205WC000.AM01",  # a supply temperature chilled water
     "B106WS01.AM54",  # an external temperature
+    #high abs corr weather:
+    #'B106WS01.AM51',  # light intensity
+    #'B106WS01.AM53',  # humidity
     #abova 0.4 spcorr
     #'B205WC140.AC21',# PRIMARY VALVE 1
     #'B205HW010.PA11',# NUMBER OF STARTS
@@ -145,18 +148,7 @@ EXAMPLE_PREDICTOR_VARIABLE_NAMES = [
     #'B205WC001.DM82_1',# FAULT DIFF-PRESSURE FILTER 2
 ]
 
-external_measurements = [
-    'B106WS01.AM50',  # light direction
-    'B106WS01.AM51',  # light intensity
-    'B106WS01.AM52',  # air pressure
-    'B106WS01.AM53',  # humidity
-    'B106WS01.AM54',  # external temperature
-    'B106WS01.AM54_1',  # outdoor air 30min (AUL-TEMP)
-    'B106WS01.AM54_2',  # outdoor air 24h (AUL-TEMP)
-    'B106WS01.AM55',  # precipitation
-    'B106WS01.AM56',  # wind direction
-    'B106WS01.AM57',  # wind speed
-]
+
 #EXAMPLE_PREDICTOR_VARIABLE_NAMES += external_measurements
 
 EXAMPLE_PREDICTOR_VARIABLE_NAMES = list(set(EXAMPLE_PREDICTOR_VARIABLE_NAMES))# remove duplicates
