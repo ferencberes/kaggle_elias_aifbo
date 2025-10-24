@@ -157,7 +157,7 @@ external_measurements = [
     'B106WS01.AM56',  # wind direction
     'B106WS01.AM57',  # wind speed
 ]
-EXAMPLE_PREDICTOR_VARIABLE_NAMES += external_measurements
+#EXAMPLE_PREDICTOR_VARIABLE_NAMES += external_measurements
 
 EXAMPLE_PREDICTOR_VARIABLE_NAMES = list(set(EXAMPLE_PREDICTOR_VARIABLE_NAMES))# remove duplicates
 SUBMISSION_FILE_PATH = f"{OUTPUTS_DIR}/submission_file.csv"
@@ -365,45 +365,23 @@ def simple_eval_and_submission_creation(
                     ]
     return res
 
-
-
-from utils import HungarianWorkdayAnalyzer
-# Initialize global analyzer instance
-hungarian_analyzer = HungarianWorkdayAnalyzer()
-
-
 def simple_feature_dataset(
-    full_multivariate_timeseries_df, add_dummy_y=False, normalize=False, feature_hours=1
+    full_multivariate_timeseries_df, add_dummy_y=False, normalize=False, feature_hours=1, input_seq_step=1, stride=1, use_custom_date_features=False
 ):
-    """Create a torch dataset from the multivariate timeseries dataframe, intended for causal prediction (just use past
-    to predict future), consisting of samples of predictor features
-    (past sequence up to time step t and daytime features) as well as target variable (value of to-be-predicted
-    variable/timeseries, at step t plus forecast ahead), each annotatetd with the timestamp of the prediction
-    (i.e., the time at which the target variable is to be predicted).
-
-    Important: to be adapted for actual models for competition.
-
-    Args:
-        multivariate_timeseries_df: The multivariate timeseries dataframe of measurements.
-        add_dummy_y: If True, the to-be-predicted target variable will be set to NaN. This option can be used to create
-            a dataset also for the test input data, where no target variable values are available, but nonetheless
-            a column needs to exist for the target variable.
-            If False, the target variable will be used as is, i.e., the dataset can be used for training or validation
-            where the target variable is available in the raw data.
-        normalize: normalize selected columns of the timeseries data.
-            if True, take mean and std from the data (and return that info),
-            if a dict, use the contained mean and std.
-    Returns:
-        A torch dataset containing pairs of input features and target variable values. Note that both, input features'
-        and target variable's first entry is the timestamp of the prediction, i.e., the time at which the target
-        variable is to be predicted.
     """
-
+    Create a simple feature dataset from the full multivariate timeseries dataframe.
+    Parameters:
+        full_multivariate_timeseries_df: The full multivariate timeseries dataframe.
+        add_dummy_y: Whether to add a dummy target variable column with NaN values.
+        normalize: Whether to normalize the features. If True, the mean and std will be computed from the data.
+            If a dict is provided, it should contain 'timeseries_df_mean' and 'timeseries_df_std' for normalization.
+        feature_hours: The number of past hours to use as features.
+        input_seq_step: The step size for the input sequence. You might not use every time step from the last `feature_hours`.
+        stride: The stride for moving the input window. Might not want to train on every available time step.
+    """
     info = {}
 
     input_seq_len = int(60 / RESAMPLE_FREQ_MIN) * feature_hours  # hours
-    input_seq_step = 1
-    stride = 1  # step size for sliding window
     predict_ahead = int(60 / RESAMPLE_FREQ_MIN) * 3  # hours
 
     # restrict to only relevant/valid data:
@@ -419,49 +397,76 @@ def simple_feature_dataset(
     #first_valid_idx = timeseries_df.notna().all(axis=1).idxmax()
     #timeseries_df = timeseries_df.loc[first_valid_idx:]
     timeseries_df.ffill(inplace=True)
-    timeseries_df.fillna(timeseries_df.mean(), inplace=True)
+    if isinstance(normalize, dict):
+        # for the test set, use mean from training set:
+        timeseries_df.fillna(normalize["timeseries_df_mean"], inplace=True)
+    else:
+        timeseries_df.fillna(timeseries_df.mean(), inplace=True)
 
     if add_dummy_y:
         timeseries_df[TARGET_VARIABLE_NAME] = np.nan
 
-    # extract and add some faetures:
+    # extract and add some features:
+    datetime_features = []
     datetime_list = timeseries_df.index.to_pydatetime()
     timeseries_df["timestamp"] = [dtime.timestamp() for dtime in datetime_list]
+    #timestamp is not added to datetime_features, it is handled separately later
+    
     timeseries_df["minute_of_day"] = (
         timeseries_df.index.hour * 60 + timeseries_df.index.minute
     )
+    datetime_features.append("minute_of_day")
+
     timeseries_df["day_of_week"] = timeseries_df.index.dayofweek
-    timeseries_df["day_of_year"] = timeseries_df.index.dayofweek
+    datetime_features.append("day_of_week")
+    
+    timeseries_df["day_of_year"] = timeseries_df.index.dayofyear#FIX: originally it was also dayofweek call in this line
+    datetime_features.append("day_of_year")
+    
     timeseries_df["yeartime_sin"] = np.sin(
         2 * np.pi * timeseries_df["day_of_year"] / 365
     )
+    datetime_features.append("yeartime_sin")
     timeseries_df["yeartime_cos"] = np.cos(
         2 * np.pi * timeseries_df["day_of_year"] / 365
     )
+    datetime_features.append("yeartime_cos")
+
     timeseries_df["daytime_sin"] = np.sin(
         2 * np.pi * timeseries_df["minute_of_day"] / (24 * 60)
     )
+    datetime_features.append("daytime_sin")
     timeseries_df["daytime_cos"] = np.cos(
         2 * np.pi * timeseries_df["minute_of_day"] / (24 * 60)
     )
-    # NEW DATETIME FEATURES
-    timeseries_df["weektime_sin"] = np.sin(
-        2 * np.pi * timeseries_df["day_of_week"] / 7
-    )
-    timeseries_df["weektime_cos"] = np.cos(
-        2 * np.pi * timeseries_df["day_of_week"] / 7
-    )
-    
-    # Hungarian holiday and working day features
-    timeseries_df["is_hungarian_holiday"] = timeseries_df.index.to_series().apply(hungarian_analyzer.is_official_holiday).astype(int)
-    timeseries_df["is_working_day"] = timeseries_df.index.to_series().apply(hungarian_analyzer.is_working_day).astype(int)
-    timeseries_df["is_weekend"] = timeseries_df.index.to_series().apply(hungarian_analyzer.is_weekend).astype(int)
+    datetime_features.append("daytime_cos")
 
-    #print(timeseries_df['is_hungarian_holiday'].value_counts())
-    #print(timeseries_df['is_working_day'].value_counts())
-    #print(timeseries_df['is_weekend'].value_counts())
+    # NEW DATETIME FEATURES
+    if use_custom_date_features:
+        timeseries_df["weektime_sin"] = np.sin(
+            2 * np.pi * timeseries_df["day_of_week"] / 7
+        )
+        datetime_features.append("weektime_sin")
+        timeseries_df["weektime_cos"] = np.cos(
+            2 * np.pi * timeseries_df["day_of_week"] / 7
+        )
+        datetime_features.append("weektime_cos")
+    
+        from utils import HungarianWorkdayAnalyzer
+        # Initialize global analyzer instance
+        hungarian_analyzer = HungarianWorkdayAnalyzer()
+
+        # Hungarian holiday and working day features
+        timeseries_df["is_hungarian_holiday"] = timeseries_df.index.to_series().apply(hungarian_analyzer.is_official_holiday).astype(int)
+        timeseries_df["is_working_day"] = timeseries_df.index.to_series().apply(hungarian_analyzer.is_working_day).astype(int)
+        timeseries_df["is_weekend"] = timeseries_df.index.to_series().apply(hungarian_analyzer.is_weekend).astype(int)
+        datetime_features.extend(["is_hungarian_holiday", "is_working_day", "is_weekend"])
+        #print(timeseries_df['is_hungarian_holiday'].value_counts())
+        #print(timeseries_df['is_working_day'].value_counts())
+        #print(timeseries_df['is_weekend'].value_counts())
 
     column_names = timeseries_df.columns
+    print('Dataset columns:', column_names.tolist())
 
     if normalize:
         if normalize == True:
@@ -494,11 +499,30 @@ def simple_feature_dataset(
     for i in range(0, data.shape[0] - input_seq_len - predict_ahead, stride):
         selected_features = []
         
+        #first come timestamp
         timestamp = data[
             i + input_seq_len + predict_ahead, column_names.get_loc("timestamp")
         ].unsqueeze(0)
         selected_features.append(timestamp)
+        # next previous datetime features:
+        for dt_feature in datetime_features:
+            if dt_feature == "timestamp":
+                continue  # already handled
+            elif dt_feature == "day_of_week":
+                day_of_week = torch.nn.functional.one_hot(
+                    data[
+                        i + input_seq_len + predict_ahead, column_names.get_loc("day_of_week")
+                    ].to(dtype=torch.long),
+                    num_classes=7,
+                )
+                selected_features.append(day_of_week)
+            else:
+                dt_feature_values = data[
+                    i + input_seq_len + predict_ahead, column_names.get_loc(dt_feature)
+                ].unsqueeze(0)
+                selected_features.append(dt_feature_values)
 
+        # finally: numerical (not date related) predictor variables:
         for predictor in EXAMPLE_PREDICTOR_VARIABLE_NAMES:
             if not predictor in column_names:
                 raise ValueError(
@@ -513,57 +537,7 @@ def simple_feature_dataset(
         )
         selected_features.append(predictor_values)
 
-        daytime_sin = data[
-            i + input_seq_len + predict_ahead, column_names.get_loc("daytime_sin")
-        ].unsqueeze(0)
-        selected_features.append(daytime_sin)
-        
-        daytime_cos = data[
-            i + input_seq_len + predict_ahead, column_names.get_loc("daytime_cos")
-        ].unsqueeze(0)
-        selected_features.append(daytime_cos)
-
-        day_of_week = torch.nn.functional.one_hot(
-            data[
-                i + input_seq_len + predict_ahead, column_names.get_loc("day_of_week")
-            ].to(dtype=torch.long),
-            num_classes=7,
-        )
-        selected_features.append(day_of_week)
-
-        yeartime_sin = data[
-            i + input_seq_len + predict_ahead, column_names.get_loc("yeartime_sin")
-        ].unsqueeze(0)
-        selected_features.append(yeartime_sin)
-        yeartime_cos = data[
-            i + input_seq_len + predict_ahead, column_names.get_loc("yeartime_cos")
-        ].unsqueeze(0)
-        selected_features.append(yeartime_cos)  
-        
-        """
-        weektime_sin = data[
-            i + input_seq_len + predict_ahead, column_names.get_loc("weektime_sin")
-        ].unsqueeze(0)
-        selected_features.append(weektime_sin)
-        weektime_cos = data[
-            i + input_seq_len + predict_ahead, column_names.get_loc("weektime_cos")
-        ].unsqueeze(0)
-        selected_features.append(weektime_sin)
-        
-        is_hungarian_holiday = data[
-            i + input_seq_len + predict_ahead, column_names.get_loc("is_hungarian_holiday")
-        ].unsqueeze(0)
-        selected_features.append(is_hungarian_holiday)
-        is_working_day = data[
-            i + input_seq_len + predict_ahead, column_names.get_loc("is_working_day")
-        ].unsqueeze(0)
-        selected_features.append(is_working_day)
-        is_weekend = data[
-            i + input_seq_len + predict_ahead, column_names.get_loc("is_weekend")
-        ].unsqueeze(0)
-        selected_features.append(is_weekend)
-        """
-
+        # Concatenate all selected features
         X.append(torch.cat(selected_features))
 
         target_variable = data[
@@ -575,7 +549,7 @@ def simple_feature_dataset(
 
     X = torch.stack(X)
     Y = torch.stack(Y)
-
+    print('Tensor shapes:', X.shape, Y.shape)
     dataset = TensorDataset(X, Y)
 
     return dataset, info
@@ -757,6 +731,12 @@ if __name__ == "__main__":
                        help='Enable wandb logging')
     parser.add_argument('--feature_hours', type=int, default=1,
                        help='Number of past hours to use as features (default: 1)')
+    parser.add_argument('--input_seq_step', type=int, default=1,
+                       help='Step size for input sequence (default: 1)')
+    parser.add_argument('--stride', type=int, default=1,
+                       help='Stride for moving the input window (default: 1)')
+    parser.add_argument('--use_custom_date', action='store_true',
+                       help='Use custom date features in the dataset')
     parser.add_argument('--name', type=str, default=None)
     args = parser.parse_args()
     
@@ -826,10 +806,13 @@ if __name__ == "__main__":
 
     # Turn it into torch datasets for simple prediction from past to future, with simple features:
     full_train_dataset, full_train_dataset_info = simple_feature_dataset(
-        full_train_df, add_dummy_y=False, normalize=True, feature_hours=args.feature_hours
+        full_train_df, add_dummy_y=False, normalize=True, feature_hours=args.feature_hours, 
+        input_seq_step=args.input_seq_step, stride=args.stride, use_custom_date_features=args.use_custom_date
     )
+    #stride is set to 1 for test dataset, because we want predictions for every time step in test set
     test_input_dataset, _ = simple_feature_dataset(
-        test_input_df, add_dummy_y=True, normalize=full_train_dataset_info, feature_hours=args.feature_hours
+        test_input_df, add_dummy_y=True, normalize=full_train_dataset_info, feature_hours=args.feature_hours, 
+        input_seq_step=args.input_seq_step, stride=1, use_custom_date_features=args.use_custom_date
     )
 
     # Turn it into data loaders for training, validation, and submission (where submission loader differs in that
