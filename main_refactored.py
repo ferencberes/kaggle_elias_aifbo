@@ -89,23 +89,15 @@ EXAMPLE_PREDICTOR_VARIABLE_NAMES = [
     #ORIGINAL 2:
     "B205WC000.AM01",  # a supply temperature chilled water
     "B106WS01.AM54",  # an external temperature
-    #high abs corr weather:
+    #high abs corr weather: in globally low corr features
     #'B106WS01.AM51',  # light intensity
     #'B106WS01.AM53',  # humidity
-    #abova 0.4 spcorr
-    #'B205WC140.AC21',# PRIMARY VALVE 1
-    #'B205HW010.PA11',# NUMBER OF STARTS
-    #'B205HW020.PA11',# NUMBER OF STARTS
-    #'B205WC001.AM71',# TOTAL VOLUME CHILLED WATER
-    #'B205WC000.AM71',# VOLUME CHILLED WATER BP201/202/206
-    # same num best lasso weights:
-    #'B205WC140.AC21',# PRIMARY VALVE 1
-    #'B205WC030.AM55_3',# ACTUAL CAPACITY
-    #'B201AH162.AC21',# COOLER VALVE
-    ##'B205WC002.RA001',# SPEED CHILLED WATER PUMP
-    #'B205WC001.DM82_1',# FAULT DIFF-PRESSURE FILTER 2
+    #high abs corr new analysis: above 0.5 abs corr with shift -180min
+    'B205WC001.AM71',# TOTAL VOLUME CHILLED WATER
+    'B205WC000.AM71',# VOLUME CHILLED WATER BP201/202/206
+    'B205WC140.AC21',# PRIMARY VALVE 1
+    'B201RC572.AC61',# VAV SUPPLY AIR 201.C.571
 ]
-
 
 #EXAMPLE_PREDICTOR_VARIABLE_NAMES += external_measurements
 
@@ -422,6 +414,18 @@ def simple_feature_dataset(
 
     column_names = timeseries_df.columns
     print('Dataset columns:', column_names.tolist())
+    
+    # Store feature information in info dict
+    info['feature_columns'] = column_names.tolist()
+    info['predictor_variables'] = EXAMPLE_PREDICTOR_VARIABLE_NAMES
+    info['target_variable'] = TARGET_VARIABLE_NAME
+    info['datetime_features'] = datetime_features
+    info['feature_hours'] = feature_hours
+    info['input_seq_step'] = input_seq_step
+    info['stride'] = stride
+    info['use_custom_date_features'] = use_custom_date_features
+    info['input_seq_len'] = input_seq_len
+    info['predict_ahead'] = predict_ahead
 
     if normalize:
         if normalize == True:
@@ -841,8 +845,7 @@ def run_experiment_mode(data_split, args):
         test_start_datetime = datetime.fromisoformat(metadata['test_start_datetime'])
         print(f"Loaded data split metadata: {metadata['train_start']} to {metadata['train_end']} (train), {metadata['test_start']} to {metadata['test_end']} (test)")
     else:
-        print("Warning: metadata.json not found, using default test start datetime")
-        test_start_datetime = datetime(2025, 6, 1)
+        raise RuntimeError("metadata.json not found, using default test start datetime")
     
     # Load preprocessed data
     print("Loading preprocessed train data...")
@@ -889,8 +892,66 @@ def run_experiment_mode(data_split, args):
     test_input_loader = DataLoader(test_input_dataset, batch_size=64, shuffle=False)
 
     # Setup output directory for this experiment
-    experiment_output_dir = os.path.join(data_split_dir, "experiments")
+    experiment_output_dir = os.path.join(data_split_dir, "experiments", args.name)
     os.makedirs(experiment_output_dir, exist_ok=True)
+    
+    # Export experiment parameters and features
+    experiment_params = {
+        'experiment_name': args.name,
+        'data_split': data_split,
+        'timestamp': datetime.now().isoformat(),
+        'model_type': 'sklearn' if args.sklearn else 'pytorch',
+        'feature_parameters': {
+            'feature_hours': getattr(args, 'feature_hours', 1),
+            'input_seq_step': getattr(args, 'input_seq_step', 1),
+            'stride': getattr(args, 'stride', 1),
+            'use_custom_date_features': getattr(args, 'use_custom_date', False),
+            'resample_freq_min': RESAMPLE_FREQ_MIN,
+            'input_seq_len': full_train_dataset_info.get('input_seq_len'),
+            'predict_ahead': full_train_dataset_info.get('predict_ahead'),
+        },
+        'data_info': {
+            'train_shape': list(full_train_df.shape),
+            'test_shape': list(test_input_df.shape),
+            'target_variable': TARGET_VARIABLE_NAME,
+            'predictor_variables': EXAMPLE_PREDICTOR_VARIABLE_NAMES,
+            'datetime_features': full_train_dataset_info.get('datetime_features', []),
+        },
+        'dataset_info': {
+            'train_dataset_length': len(full_train_dataset),
+            'test_dataset_length': len(test_input_dataset),
+            'train_split_index': int(0.8 * len(full_train_dataset)),
+        }
+    }
+    
+    # Save experiment parameters as JSON
+    params_file = os.path.join(experiment_output_dir, "experiment_parameters.json")
+    import json
+    with open(params_file, 'w') as f:
+        json.dump(experiment_params, f, indent=2)
+    
+    # Save feature lists as text files
+    train_features_file = os.path.join(experiment_output_dir, "train_features.txt")
+    with open(train_features_file, 'w') as f:
+        f.write("Training Data Features:\n")
+        f.write("=" * 50 + "\n")
+        for i, feature in enumerate(full_train_dataset_info.get('feature_columns', []), 1):
+            f.write(f"{i:3d}. {feature}\n")
+        f.write(f"\nTotal features: {len(full_train_dataset_info.get('feature_columns', []))}\n")
+    
+    test_features_file = os.path.join(experiment_output_dir, "test_features.txt")  
+    with open(test_features_file, 'w') as f:
+        f.write("Test Data Features:\n")
+        f.write("=" * 50 + "\n")
+        # Test features should be the same as train features
+        for i, feature in enumerate(full_train_dataset_info.get('feature_columns', []), 1):
+            f.write(f"{i:3d}. {feature}\n")
+        f.write(f"\nTotal features: {len(full_train_dataset_info.get('feature_columns', []))}\n")
+    
+    print(f"📄 Experiment parameters saved:")
+    print(f"  Parameters: {params_file}")
+    print(f"  Train features: {train_features_file}")
+    print(f"  Test features: {test_features_file}")
     
     if args.sklearn:
         from sklearn.linear_model import LinearRegression, Lasso
@@ -899,18 +960,20 @@ def run_experiment_mode(data_split, args):
 
         # Define and train sklearn models
         models = {
-            "LinearRegression": LinearRegression(),
+            #"LinearRegression": LinearRegression(),without feature selection it is sensitive to outliers
             "Lasso": Lasso(alpha=0.01),
             "DecisionTreeRegressor": DecisionTreeRegressor(max_depth=5),
-            "XGBRegressor": XGBRegressor(n_estimators=10, max_depth=2, learning_rate=0.01),
+            "XGBRegressor(10,2)": XGBRegressor(n_estimators=10, max_depth=2, learning_rate=0.01),
+            "XGBRegressor(10,5)": XGBRegressor(n_estimators=10, max_depth=5, learning_rate=0.01),
+            "XGBRegressor(20,2)": XGBRegressor(n_estimators=20, max_depth=2, learning_rate=0.01),
+            "XGBRegressor(20,5)": XGBRegressor(n_estimators=20, max_depth=5, learning_rate=0.01),
         }
         model_performance = sklearn_model_and_train(models, train_loader, vali_loader, use_wandb=args.wandb)
         performance_csv = pd.DataFrame.from_dict(model_performance, orient='index', columns=['CV_MSE'])
-        name = '' if args.name is None else '_' + args.name
-        performance_file = os.path.join(experiment_output_dir, f"sklearn_model_performance{name}.csv")
+        performance_file = os.path.join(experiment_output_dir, f"sklearn_model_performance.csv")
         performance_csv.to_csv(performance_file)
         print(f"Model performance saved to: {performance_file}")
-        raise NotImplementedError("Sklearn model evaluation and submission creation not implemented yet.")
+        #raise NotImplementedError("Sklearn model evaluation and submission creation not implemented yet.")
     else:
         # Define loss function, model, and perform training:
         loss_fn = nn.MSELoss()
@@ -982,6 +1045,99 @@ def run_experiment_mode(data_split, args):
         print(f"Submission file: {submission_file_path}")
 
 
+def run_summary_mode(experiment_name, data_splits=None, summary_dir=None):
+    """Run summary mode: load and summarize sklearn model performance across data splits."""
+    print("Running in SUMMARY mode...")
+    print(f"Summarizing results for experiment: {experiment_name}")
+    
+    # Get all available data splits if not specified
+    if data_splits is None:
+        all_splits = [d for d in os.listdir(OUTPUTS_DIR) if os.path.isdir(os.path.join(OUTPUTS_DIR, d))]
+        data_splits = all_splits
+        print(f"No specific data splits provided, using all available: {len(data_splits)} splits")
+    else:
+        print(f"Summarizing results for {len(data_splits)} specified data splits")
+    
+    # Collect performance data
+    summary_data = []
+    
+    for data_split in data_splits:
+        data_split_dir = os.path.join(OUTPUTS_DIR, data_split)
+        experiment_dir = os.path.join(data_split_dir, "experiments", experiment_name)
+        performance_file = os.path.join(experiment_dir, "sklearn_model_performance.csv")
+        
+        if not os.path.exists(performance_file):
+            print(f"Warning: Performance file not found for data split '{data_split}' and experiment '{experiment_name}'")
+            print(f"  Expected: {performance_file}")
+            continue
+            
+        # Load performance data
+        try:
+            perf_df = pd.read_csv(performance_file, index_col=0)
+            
+            # Add data split info to each model's performance
+            for model_name, row in perf_df.iterrows():
+                summary_data.append({
+                    'data_split': data_split,
+                    'model': model_name,
+                    'cv_mse': row['CV_MSE'],
+                })
+                
+            print(f"✓ Loaded results for data split: {data_split}")
+            
+        except Exception as e:
+            print(f"Error loading performance file for data split '{data_split}': {e}")
+            continue
+    
+    if not summary_data:
+        print("No performance data found! Make sure you have run sklearn experiments with the specified name.")
+        return
+    
+    # Create summary DataFrame
+    summary_df = pd.DataFrame(summary_data)
+    
+    print(f"\n" + "="*80)
+    print(f"SKLEARN MODEL PERFORMANCE SUMMARY")
+    print(f"Experiment Name: {experiment_name}")
+    print(f"Number of Data Splits: {summary_df['data_split'].nunique()}")
+    print(f"Number of Models: {summary_df['model'].nunique()}")
+    print(f"="*80)
+    
+    # Overall summary statistics
+    print(f"\n📊 OVERALL PERFORMANCE STATISTICS:")
+    model_summary = summary_df.groupby('model')['cv_mse'].agg(['count', 'mean', 'std', 'min', 'max']).round(6)
+    model_summary.columns = ['Data Splits', 'Mean CV MSE', 'Std CV MSE', 'Min CV MSE', 'Max CV MSE']
+    print(model_summary.sort_values('Mean CV MSE').to_string())
+    
+    # Best performing model per data split
+    print(f"\n🏆 BEST MODEL PER DATA SPLIT:")
+    best_per_split = summary_df.loc[summary_df.groupby('data_split')['cv_mse'].idxmin()][['data_split', 'model', 'cv_mse']]
+    best_per_split = best_per_split.sort_values('cv_mse')
+    print(best_per_split.to_string(index=False))
+    
+    # Model performance across data splits (pivot table)
+    print(f"\n📈 MODEL PERFORMANCE MATRIX (CV MSE):")
+    pivot_df = summary_df.pivot(index='data_split', columns='model', values='cv_mse').round(6)
+    print(pivot_df.to_string())
+    
+    # Save summary to file only if summary_dir is specified
+    if summary_dir is not None:
+        os.makedirs(summary_dir, exist_ok=True)
+        
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        summary_file = os.path.join(summary_dir, f"sklearn_summary_{experiment_name}_{timestamp}.csv")
+        summary_df.to_csv(summary_file, index=False)
+        
+        pivot_file = os.path.join(summary_dir, f"sklearn_pivot_{experiment_name}_{timestamp}.csv")
+        pivot_df.to_csv(pivot_file)
+        
+        print(f"\n💾 SUMMARY SAVED:")
+        print(f"  Detailed summary: {summary_file}")
+        print(f"  Performance matrix: {pivot_file}")
+    else:
+        print(f"\n💾 No summary directory specified (--summarydir), files not saved.")
+
+
 if __name__ == "__main__":
     # Parse command line arguments with subparsers
     parser = argparse.ArgumentParser(description='ELIAS Bosch AI for Building Optimisation prediction')
@@ -1000,8 +1156,7 @@ if __name__ == "__main__":
     
     # Experiment mode subparser  
     experiment_parser = subparsers.add_parser('experiment', help='Run ML experiment on preprocessed data')
-    experiment_parser.add_argument('--data_split', type=str, required=True,
-                                  help='Data split subfolder to load for experiment')
+    experiment_parser.add_argument('--name', type=str, required=True, help='Experiment name identifier')
     
     # Experiment-specific parameters
     experiment_parser.add_argument('--device', type=str, default=None,
@@ -1018,8 +1173,17 @@ if __name__ == "__main__":
                                   help='Stride for moving the input window (default: 1)')
     experiment_parser.add_argument('--use_custom_date', action='store_true',
                                   help='Use custom date features in the dataset')
-    experiment_parser.add_argument('--name', type=str, default=None,
-                                  help='Experiment name suffix')
+    experiment_parser.add_argument('--data_splits', type=str, nargs='+', default=None,
+                                  help='List of data split folder names to run experiments on (e.g., train_2022-01_to_2022-03_test_2022-04_to_2022-05)')
+    
+    # Summary mode subparser
+    summary_parser = subparsers.add_parser('summary', help='Summarize sklearn model performance across data splits')
+    summary_parser.add_argument('--name', type=str, required=True,
+                               help='Experiment name identifier to summarize results for')
+    summary_parser.add_argument('--data_splits', type=str, nargs='+', default=None,
+                               help='List of specific data split folder names to include in summary (if not provided, includes all available)')
+    summary_parser.add_argument('--summarydir', type=str, default=None,
+                               help='Directory to export summary files to (if not provided, no files are saved)')
     
     args = parser.parse_args()
     
@@ -1040,6 +1204,9 @@ if __name__ == "__main__":
     # Run appropriate mode
     if args.mode == 'resample':
         run_resample_mode(args.train_start, args.train_end, args.test_start, args.test_end)
+        
+    elif args.mode == 'summary':
+        run_summary_mode(args.name, args.data_splits, args.summarydir)
         
     elif args.mode == 'experiment':
         # Setup device and torch configuration for experiment mode
@@ -1074,9 +1241,19 @@ if __name__ == "__main__":
                 },
                 tags=["pytorch", "timeseries", "building-optimization", "kaggle"]
             )
-        
-        # Run experiment
-        run_experiment_mode(args.data_split, args)
+        all_splits = os.listdir(OUTPUTS_DIR)
+        if args.data_splits is None:
+            data_splits_to_run = all_splits
+        else:
+            for data_split in args.data_splits:
+                if data_split not in all_splits:
+                    raise ValueError(f"Data split folder {data_split} not found in outputs directory.")
+            data_splits_to_run = args.data_splits
+
+        # Run experiments
+        for data_split in data_splits_to_run:
+            print(f"Running experiment for data split: {data_split}")
+            run_experiment_mode(data_split, args)
         
         # Finalize wandb logging
         if use_wandb:
