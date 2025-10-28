@@ -35,6 +35,7 @@ import matplotlib.pyplot as plt
 import torchvision
 from tqdm import tqdm
 import wandb
+import sys
 
 def setup_device(device_arg):
     """Setup device based on argument.
@@ -80,50 +81,7 @@ def setup_wandb():
 
 
 DATA_DIR = "data"
-OUTPUTS_DIR = "outputs"
-TRAIN_DATA_FILE_PATHS = list(
-    chain(
-        #glob.glob(
-        #    f"{DATA_DIR}/kaggle_dl/RBHU-2024-06/RBHU/**/*.parquet", recursive=True
-        #),
-        #glob.glob(
-        #    f"{DATA_DIR}/kaggle_dl/RBHU-2024-07/RBHU/**/*.parquet", recursive=True
-        #),
-        #glob.glob(
-        #    f"{DATA_DIR}/kaggle_dl/RBHU-2024-08/RBHU/**/*.parquet", recursive=True
-        #),
-        glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-2025-01/RBHU/**/*.parquet", recursive=True
-        ),
-        glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-2025-02/RBHU/**/*.parquet", recursive=True
-        ),
-        glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-2025-03/RBHU/**/*.parquet", recursive=True
-        ),
-        glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-2025-04/RBHU/**/*.parquet", recursive=True
-        ),
-        glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-2025-05/RBHU/**/*.parquet", recursive=True
-        ),
-    )
-)
-TEST_START_DATETIME = datetime(2025, 6, 1)  # start of test set
-TEST_INPUT_DATA_FILE_PATHS = list(
-    chain(
-        glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-2025-05/RBHU/**/*.parquet",
-            recursive=True,
-        ),  # just for the lag
-        glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-2025-06/RBHU/**/*.parquet", recursive=True
-        ),
-        glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-2025-07/RBHU/**/*.parquet", recursive=True
-        ),
-    )
-)
+OUTPUTS_DIR = os.path.join(DATA_DIR, "splits")
 RESAMPLE_FREQ_MIN = 10  # the frequency in minutes to resample the raw irregularly sampled timeseries to, using ffill
 EPS = 1e-6
 TARGET_VARIABLE_NAME = "B205WC000.AM02"  # the target variable to be predicted
@@ -187,7 +145,7 @@ def simple_load_and_resample_data(
         # load, preprocess and group timeseries per sensor (i.e., for each sensor, got multiple periods):
         print("Start loading and preprocessing a dataset ...")
         dataframes_per_sensor = {}
-        for path in tqdm(data_file_paths):
+        for path in tqdm(data_file_paths, mininterval=15):
             name = path.split("/")[-1].replace(".parquet", "")
             if not name in dataframes_per_sensor.keys():
                 dataframes_per_sensor[name] = []
@@ -229,7 +187,12 @@ def simple_load_and_resample_data(
             axs[i].plot(multivariate_timeseries_df[col], label=col, linewidth=0.75)
             axs[i].tick_params(axis="x", labelrotation=90)
             axs[i].legend(fontsize="small")
-        plt.savefig(f"{OUTPUTS_DIR}/input_data_sample_timeseries_plot.png", bbox_inches="tight")
+        # Extract output directory from save_load_df path
+        if save_load_df:
+            output_dir = os.path.dirname(save_load_df)
+        else:
+            output_dir = OUTPUTS_DIR
+        plt.savefig(os.path.join(output_dir, "input_data_sample_timeseries_plot.png"), bbox_inches="tight")
         plt.close(fig)
 
     if save_load_df and save:
@@ -685,14 +648,87 @@ def sklearn_model_and_train(models, train_loader, vali_loader, cv=5, use_wandb=F
             best_model_name = model_name
     return model_performance
 
-def check_preprocessed_files_exist():
-    """Check if both preprocessed files exist in the outputs directory.
+def get_data_file_paths(train_start, train_end, test_start=None, test_end=None):
+    """Generate file paths based on date ranges. Note that for the test set, one month before the test_start is also included for proper feature extraction.
+    
+    Args:
+        train_start: Training start date in YYYY-MM format
+        train_end: Training end date in YYYY-MM format
+        test_start: Test start date in YYYY-MM format. If None, defaults to the month after train_end.
+        test_end: Test end date in YYYY-MM format. If None, defaults to the month after test_start.
+
+    Returns:
+        tuple: (train_file_paths, test_file_paths, test_start_datetime)
+    """
+    def get_next_month(date_str):
+        year, month = map(int, date_str.split('-'))
+        if month == 12:
+            return f"{year + 1}-01"
+        else:
+            return f"{year}-{month + 1:02d}"
+        
+    def get_previous_month(date_str):
+        year, month = map(int, date_str.split('-'))
+        if month == 1:
+            return f"{year - 1}-12"
+        else:
+            return f"{year}-{month - 1:02d}"
+
+    def get_month_paths(start_date, end_date):
+        
+
+        """Get file paths for months in range."""
+        paths = []
+        start_year, start_month = map(int, start_date.split('-'))
+        end_year, end_month = map(int, end_date.split('-'))
+        
+        current_year = start_year
+        current_month = start_month
+        
+        while (current_year < end_year) or (current_year == end_year and current_month <= end_month):
+            month_pattern = f"{DATA_DIR}/kaggle_dl/RBHU-{current_year:04d}-{current_month:02d}/RBHU/**/*.parquet"
+            paths.extend(glob.glob(month_pattern, recursive=True))
+            
+            current_month += 1
+            if current_month > 12:
+                current_month = 1
+                current_year += 1
+        return paths
+    
+    train_file_paths = get_month_paths(train_start, train_end)
+
+    if test_start is None or test_end is None:
+        print("No test date range provided, by default using next two months after training end date.")
+        test_start = get_next_month(train_end)
+        test_end = get_next_month(test_start)
+
+    # Create test start datetime from test_start parameter
+    test_year, test_month = map(int, test_start.split('-'))
+    test_start_datetime = datetime(test_year, test_month, 1)
+
+    # we load one month before test start for proper feature extraction:
+    test_file_paths = get_month_paths(get_previous_month(test_start), test_end)
+    
+    return train_file_paths, test_file_paths, test_start_datetime
+
+
+def get_data_split_folder(train_start, train_end, test_start, test_end):
+    """Generate folder name for data split."""
+    return f"train_{train_start}_to_{train_end}_test_{test_start}_to_{test_end}"
+
+
+def check_preprocessed_files_exist(data_split_folder):
+    """Check if both preprocessed files exist in the data split directory.
+    
+    Args:
+        data_split_folder: Name of the data split subfolder
     
     Returns:
         bool: True if both files exist, False otherwise
     """
-    train_file = f"{OUTPUTS_DIR}/preproc_full_train_df.parquet"
-    test_file = f"{OUTPUTS_DIR}/preproc_test_input_df.parquet"
+    data_split_dir = os.path.join(OUTPUTS_DIR, data_split_folder)
+    train_file = os.path.join(data_split_dir, "preproc_full_train_df.parquet")
+    test_file = os.path.join(data_split_dir, "preproc_test_input_df.parquet")
     
     train_exists = os.path.exists(train_file)
     test_exists = os.path.exists(test_file)
@@ -701,99 +737,127 @@ def check_preprocessed_files_exist():
         print("Both preprocessed files found:")
         print(f"  - {train_file}")
         print(f"  - {test_file}")
-        print("Skipping raw file processing and loading preprocessed data directly.")
         return True
     else:
         if not train_exists:
             print(f"Preprocessed train file not found: {train_file}")
         if not test_exists:
             print(f"Preprocessed test file not found: {test_file}")
-        print("Will process raw files...")
         return False
 
 
-if __name__ == "__main__":
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description='ELIAS Bosch AI for Building Optimisation prediction')
-    parser.add_argument('--device', type=str, default=None,
-                       help='Device to use for computation (default: auto-detect, options: cpu, cuda, cuda:0, etc.)')
-    parser.add_argument('--sklearn', action='store_true',
-                       help='Use sklearn models instead of PyTorch model')
-    parser.add_argument('--wandb', action='store_true',
-                       help='Enable wandb logging')
-    parser.add_argument('--feature_hours', type=int, default=1,
-                       help='Number of past hours to use as features (default: 1)')
-    parser.add_argument('--input_seq_step', type=int, default=1,
-                       help='Step size for input sequence (default: 1)')
-    parser.add_argument('--stride', type=int, default=1,
-                       help='Stride for moving the input window (default: 1)')
-    parser.add_argument('--use_custom_date', action='store_true',
-                       help='Use custom date features in the dataset')
-    parser.add_argument('--name', type=str, default=None)
-    args = parser.parse_args()
+def run_resample_mode(train_start, train_end, test_start=None, test_end=None):
+    """Run data resampling mode: load raw data, resample, and save to parquet files."""
+    print("Running in RESAMPLE mode...")
     
-    # Setup device and torch configuration
-    device = setup_device(args.device)
+    # Get file paths based on date ranges
+    train_file_paths, test_file_paths, test_start_datetime = get_data_file_paths(
+        train_start, train_end, test_start, test_end
+    )
+    
+    print(f"Found {len(train_file_paths)} training files")
+    print(f"Found {len(test_file_paths)} test files") 
+    
+    if len(train_file_paths) == 0:
+        print("Error: No training files found for the specified date range!")
+        sys.exit(1)
+    
+    if len(test_file_paths) == 0:
+        print("Error: No test files found for the specified date range!")
+        sys.exit(1)
+    
+    # Create data split folder
+    data_split_folder = get_data_split_folder(train_start, train_end, test_start, test_end)
+    data_split_dir = os.path.join(OUTPUTS_DIR, data_split_folder)
+    os.makedirs(data_split_dir, exist_ok=True)
+    
+    print(f"Data split folder: {data_split_dir}")
+    
+    # Process training data
+    print("Processing training data...")
+    train_save_path = os.path.join(data_split_dir, "preproc_full_train_df.parquet")
+    full_train_df = simple_load_and_resample_data(
+        train_file_paths,
+        generate_sample_plots=[TARGET_VARIABLE_NAME] + EXAMPLE_PREDICTOR_VARIABLE_NAMES,
+        save_load_df=train_save_path,
+    )
+    
+    # Process test data  
+    print("Processing test data...")
+    test_save_path = os.path.join(data_split_dir, "preproc_test_input_df.parquet")
+    test_input_df = simple_load_and_resample_data(
+        test_file_paths,
+        save_load_df=test_save_path,
+    )
+    
+    # Save metadata about the data split
+    metadata = {
+        'train_start': train_start,
+        'train_end': train_end,
+        'test_start': test_start,  
+        'test_end': test_end,
+        'test_start_datetime': test_start_datetime.isoformat(),
+        'train_files_count': len(train_file_paths),
+        'test_files_count': len(test_file_paths),
+        'train_shape': list(full_train_df.shape),
+        'test_shape': list(test_input_df.shape),
+        'train_time_min': full_train_df.index.min().isoformat(),
+        'train_time_max': full_train_df.index.max().isoformat(),
+        'test_time_min': test_input_df.index.min().isoformat(),
+        'test_time_max': test_input_df.index.max().isoformat(),
+        'created_at': datetime.now().isoformat()
+    }
+    
+    metadata_path = os.path.join(data_split_dir, "metadata.json")
+    import json
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
+    
+    print(f"Data resampling completed successfully!")
+    print(f"Training data shape: {full_train_df.shape}")
+    print(f"Test data shape: {test_input_df.shape}")
+    print(f"Files saved to: {data_split_dir}")
+    print(f"Metadata saved to: {metadata_path}")
 
-    torch.manual_seed(0)
-    torch.set_default_device(device)
-    print(f"Using device: {torch.get_default_device()}")
-    torch.set_default_dtype(
-        torch.float64
-    )  # with lower than float64 precision, the eventual timestamps may be off
+
+def run_experiment_mode(data_split, args):
+    """Run experiment mode: load preprocessed data and run ML experiment."""
+    print("Running in EXPERIMENT mode...")
     
-    # Setup wandb logging
-    use_wandb = setup_wandb() and args.wandb
-    #print(f"Using wandb logging: {use_wandb}")
-    if use_wandb:
-        wandb.init(
-            project="kaggle-energy",
-            name=f"training-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
-            config={
-                "device": str(torch.get_default_device()),
-                "target_variable": TARGET_VARIABLE_NAME,
-                "predictor_variables": EXAMPLE_PREDICTOR_VARIABLE_NAMES,
-                "num_predictor_variables": len(EXAMPLE_PREDICTOR_VARIABLE_NAMES),
-                "resample_freq_min": RESAMPLE_FREQ_MIN,
-                "eps": EPS,
-                "random_seed": 0,
-                "torch_dtype": str(torch.get_default_dtype()),
-                "data_dir": DATA_DIR,
-                "outputs_dir": OUTPUTS_DIR,
-                "test_start_datetime": TEST_START_DATETIME.isoformat(),
-                #"submission_file_path": SUBMISSION_FILE_PATH,
-            },
-            tags=["pytorch", "timeseries", "building-optimization", "kaggle"]
-        )
+    data_split_dir = os.path.join(OUTPUTS_DIR, data_split)
     
-    # Create outputs directory
-    os.makedirs(OUTPUTS_DIR, exist_ok=True)
+    # Check if preprocessed files exist
+    if not check_preprocessed_files_exist(data_split):
+        print(f"Error: Preprocessed files not found in {data_split_dir}")
+        print("Please run resample mode first to generate the data.")
+        sys.exit(1)
     
-    # Check if preprocessed files already exist
-    preprocessed_files_exist = check_preprocessed_files_exist()
-    
-    if preprocessed_files_exist:
-        # Load preprocessed data directly
-        print("Loading preprocessed train data...")
-        full_train_df = pd.read_parquet(f"{OUTPUTS_DIR}/preproc_full_train_df.parquet")
-        
-        print("Loading preprocessed test data...")
-        test_input_df = pd.read_parquet(f"{OUTPUTS_DIR}/preproc_test_input_df.parquet")
-        
-        print("Preprocessed data loaded successfully.")
+    # Load metadata
+    metadata_path = os.path.join(data_split_dir, "metadata.json")
+    if os.path.exists(metadata_path):
+        import json
+        with open(metadata_path, 'r') as f:
+            metadata = json.load(f)
+        test_start_datetime = datetime.fromisoformat(metadata['test_start_datetime'])
+        print(f"Loaded data split metadata: {metadata['train_start']} to {metadata['train_end']} (train), {metadata['test_start']} to {metadata['test_end']} (test)")
     else:
-        # Process raw data as usual
-        print("Processing raw data files...")
-        full_train_df = simple_load_and_resample_data(
-            TRAIN_DATA_FILE_PATHS,
-            generate_sample_plots=[TARGET_VARIABLE_NAME] + EXAMPLE_PREDICTOR_VARIABLE_NAMES,
-            save_load_df=f"{OUTPUTS_DIR}/preproc_full_train_df.parquet",
-        )
-        test_input_df = simple_load_and_resample_data(
-            TEST_INPUT_DATA_FILE_PATHS,
-            save_load_df=f"{OUTPUTS_DIR}/preproc_test_input_df.parquet",
-        )
+        print("Warning: metadata.json not found, using default test start datetime")
+        test_start_datetime = datetime(2025, 6, 1)
     
+    # Load preprocessed data
+    print("Loading preprocessed train data...")
+    train_file = os.path.join(data_split_dir, "preproc_full_train_df.parquet")
+    full_train_df = pd.read_parquet(train_file)
+    
+    print("Loading preprocessed test data...")
+    test_file = os.path.join(data_split_dir, "preproc_test_input_df.parquet")  
+    test_input_df = pd.read_parquet(test_file)
+    
+    print("Preprocessed data loaded successfully.")
+    print(f"Training data shape: {full_train_df.shape}")
+    print(f"Test data shape: {test_input_df.shape}")
+    
+    # Continue with the rest of the experiment pipeline
     tzinfo = full_train_df.index.tzinfo
 
     # Turn it into torch datasets for simple prediction from past to future, with simple features:
@@ -824,6 +888,10 @@ if __name__ == "__main__":
     vali_loader = DataLoader(vali_dataset, batch_size=64, shuffle=False)
     test_input_loader = DataLoader(test_input_dataset, batch_size=64, shuffle=False)
 
+    # Setup output directory for this experiment
+    experiment_output_dir = os.path.join(data_split_dir, "experiments")
+    os.makedirs(experiment_output_dir, exist_ok=True)
+    
     if args.sklearn:
         from sklearn.linear_model import LinearRegression, Lasso
         from sklearn.tree import DecisionTreeRegressor
@@ -836,15 +904,17 @@ if __name__ == "__main__":
             "DecisionTreeRegressor": DecisionTreeRegressor(max_depth=5),
             "XGBRegressor": XGBRegressor(n_estimators=10, max_depth=2, learning_rate=0.01),
         }
-        model_performance = sklearn_model_and_train(models, train_loader, vali_loader, use_wandb=use_wandb)
+        model_performance = sklearn_model_and_train(models, train_loader, vali_loader, use_wandb=args.wandb)
         performance_csv = pd.DataFrame.from_dict(model_performance, orient='index', columns=['CV_MSE'])
         name = '' if args.name is None else '_' + args.name
-        performance_csv.to_csv(f"{OUTPUTS_DIR}/sklearn_model_performance{name}.csv")
+        performance_file = os.path.join(experiment_output_dir, f"sklearn_model_performance{name}.csv")
+        performance_csv.to_csv(performance_file)
+        print(f"Model performance saved to: {performance_file}")
         raise NotImplementedError("Sklearn model evaluation and submission creation not implemented yet.")
     else:
         # Define loss function, model, and perform training:
         loss_fn = nn.MSELoss()
-        model = simple_model_and_train(train_loader, vali_loader, loss_fn, use_wandb)
+        model = simple_model_and_train(train_loader, vali_loader, loss_fn, args.wandb)
 
         # Evaluate model on train, validation, and test data, create plots, and create final prediction submission
         # dataframe (with datetime annotation), and save it as submission file CSV:
@@ -853,61 +923,163 @@ if __name__ == "__main__":
             model,
             loss_fn,
             generate_timeseries_prediction=True,
-            save_fig=f"{OUTPUTS_DIR}/plot_train.png",
+            save_fig=os.path.join(experiment_output_dir, "plot_train.png"),
         )
         res_eval_vali = simple_eval_and_submission_creation(
             vali_loader,
             model,
             loss_fn,
             generate_timeseries_prediction=True,
-            save_fig=f"{OUTPUTS_DIR}/plot_vali.png",
+            save_fig=os.path.join(experiment_output_dir, "plot_vali.png"),
         )
         res_eval_test_input = simple_eval_and_submission_creation(
             test_input_loader,
             model,
             loss_fn=None,  # no loss function for test set evaluation, because there is no ground truth in raw data
             generate_timeseries_prediction=True,
-            save_fig=f"{OUTPUTS_DIR}/plot_test.png",
-            create_submission_df=TEST_START_DATETIME,
+            save_fig=os.path.join(experiment_output_dir, "plot_test.png"),
+            create_submission_df=test_start_datetime,
         )
         test_prediction_df = res_eval_test_input["ys_pred_df"]
 
-    test_prediction_df_for_csv = test_prediction_df.copy()
-    test_prediction_df_for_csv.index = test_prediction_df.index.tz_localize(tzinfo)
-    test_prediction_df_for_csv.index = test_prediction_df.index.strftime(
-        SUBMISSION_FILE_DATETIME_FORMAT
-    )
-    test_prediction_df_for_csv.index.name = "ID"
-    
-    # Log final evaluation metrics to wandb
-    if use_wandb:
-        wandb.log({
-            "final_train_loss": res_eval_train["avg_loss"].item(),
-            "final_validation_loss": res_eval_vali["avg_loss"].item(),
-            "num_predictions": len(test_prediction_df),
-        })
+        test_prediction_df_for_csv = test_prediction_df.copy()
+        test_prediction_df_for_csv.index = test_prediction_df.index.tz_localize(tzinfo)
+        test_prediction_df_for_csv.index = test_prediction_df.index.strftime(
+            SUBMISSION_FILE_DATETIME_FORMAT
+        )
+        test_prediction_df_for_csv.index.name = "ID"
         
-        # Log model configuration
-        sample_batch, _ = next(iter(train_loader))
-        wandb.config.update({
-            "input_size": sample_batch.shape[-1] - 1,  # subtract 1 for timestamp
-            "model_architecture": "SimpleAIFBOModel",
-            "optimizer": "Adam",
-            "learning_rate": 2.5e-4,
-            "num_epochs": 200,
-            "batch_size": 64,
-            "loss_function": "MSELoss",
-        })
+        # Log final evaluation metrics to wandb
+        if args.wandb:
+            wandb.log({
+                "final_train_loss": res_eval_train["avg_loss"].item(),
+                "final_validation_loss": res_eval_vali["avg_loss"].item(),
+                "num_predictions": len(test_prediction_df),
+            })
+            
+            # Log model configuration
+            sample_batch, _ = next(iter(train_loader))
+            wandb.config.update({
+                "input_size": sample_batch.shape[-1] - 1,  # subtract 1 for timestamp
+                "model_architecture": "SimpleAIFBOModel",
+                "optimizer": "Adam",
+                "learning_rate": 2.5e-4,
+                "num_epochs": 200,
+                "batch_size": 64,
+                "loss_function": "MSELoss",
+            })
+        
+        # write the submission file that can then be uploaded to the competition page:
+        submission_file_path = os.path.join(experiment_output_dir, "submission_file.csv")
+        test_prediction_df_for_csv.to_csv(
+            submission_file_path,
+            index=True,
+            quoting=csv.QUOTE_ALL,
+        )
+        
+        print(f"Experiment completed successfully!")
+        print(f"Results saved to: {experiment_output_dir}")
+        print(f"Submission file: {submission_file_path}")
+
+
+if __name__ == "__main__":
+    # Parse command line arguments with subparsers
+    parser = argparse.ArgumentParser(description='ELIAS Bosch AI for Building Optimisation prediction')
+    subparsers = parser.add_subparsers(dest='mode', help='Available modes', required=True)
     
-    # write the submission file that can then be uploaded to the competition page:
-    test_prediction_df_for_csv.to_csv(
-        SUBMISSION_FILE_PATH,
-        index=True,
-        quoting=csv.QUOTE_ALL,
-    )
+    # Resample mode subparser
+    resample_parser = subparsers.add_parser('resample', help='Load raw data and create resampled parquet files')
+    resample_parser.add_argument('--train_start', type=str, required=True,
+                                help='Training start date in YYYY-MM format')
+    resample_parser.add_argument('--train_end', type=str, required=True,
+                                help='Training end date in YYYY-MM format')  
+    resample_parser.add_argument('--test_start', type=str, default=None,
+                                help='Test start date in YYYY-MM format. If not provided, defaults to one month after training end date')
+    resample_parser.add_argument('--test_end', type=str, default=None,
+                                help='Test end date in YYYY-MM format. If not provided, defaults to two months after training end date')
     
-    # Finalize wandb logging
-    if use_wandb:
-        wandb.finish()
+    # Experiment mode subparser  
+    experiment_parser = subparsers.add_parser('experiment', help='Run ML experiment on preprocessed data')
+    experiment_parser.add_argument('--data_split', type=str, required=True,
+                                  help='Data split subfolder to load for experiment')
+    
+    # Experiment-specific parameters
+    experiment_parser.add_argument('--device', type=str, default=None,
+                                  help='Device to use for computation (default: auto-detect, options: cpu, cuda, cuda:0, etc.)')
+    experiment_parser.add_argument('--sklearn', action='store_true',
+                                  help='Use sklearn models instead of PyTorch model')
+    experiment_parser.add_argument('--wandb', action='store_true',
+                                  help='Enable wandb logging')
+    experiment_parser.add_argument('--feature_hours', type=int, default=1,
+                                  help='Number of past hours to use as features (default: 1)')
+    experiment_parser.add_argument('--input_seq_step', type=int, default=1,
+                                  help='Step size for input sequence (default: 1)')
+    experiment_parser.add_argument('--stride', type=int, default=1,
+                                  help='Stride for moving the input window (default: 1)')
+    experiment_parser.add_argument('--use_custom_date', action='store_true',
+                                  help='Use custom date features in the dataset')
+    experiment_parser.add_argument('--name', type=str, default=None,
+                                  help='Experiment name suffix')
+    
+    args = parser.parse_args()
+    
+    # Validate date format for resample mode
+    if args.mode == 'resample':
+        import re
+        date_pattern = r'^\d{4}-\d{2}$'
+        for date_arg, date_value in [('train_start', args.train_start), ('train_end', args.train_end), 
+                                   ('test_start', args.test_start), ('test_end', args.test_end)]:
+            if date_arg in ['test_start', 'test_end'] and date_value is None:
+                continue  # skip validation if not provided
+            if not re.match(date_pattern, date_value):
+                parser.error(f"Invalid date format for --{date_arg}: {date_value}. Expected format: YYYY-MM")
+    
+    # Create outputs directory
+    os.makedirs(OUTPUTS_DIR, exist_ok=True)
+    
+    # Run appropriate mode
+    if args.mode == 'resample':
+        run_resample_mode(args.train_start, args.train_end, args.test_start, args.test_end)
+        
+    elif args.mode == 'experiment':
+        # Setup device and torch configuration for experiment mode
+        device = setup_device(args.device)
+        torch.manual_seed(0)
+        torch.set_default_device(device)
+        print(f"Using device: {torch.get_default_device()}")
+        torch.set_default_dtype(torch.float64)  # with lower than float64 precision, the eventual timestamps may be off
+        
+        # Setup wandb logging
+        use_wandb = setup_wandb() and getattr(args, 'wandb', False)
+        if use_wandb:
+            wandb.init(
+                project="kaggle-energy",
+                name=f"training-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{args.data_split}",
+                config={
+                    "device": str(torch.get_default_device()),
+                    "target_variable": TARGET_VARIABLE_NAME,
+                    "predictor_variables": EXAMPLE_PREDICTOR_VARIABLE_NAMES,
+                    "num_predictor_variables": len(EXAMPLE_PREDICTOR_VARIABLE_NAMES),
+                    "resample_freq_min": RESAMPLE_FREQ_MIN,
+                    "eps": EPS,
+                    "random_seed": 0,
+                    "torch_dtype": str(torch.get_default_dtype()),
+                    "data_dir": DATA_DIR,
+                    "outputs_dir": OUTPUTS_DIR,
+                    "data_split": args.data_split,
+                    "feature_hours": getattr(args, 'feature_hours', 1),
+                    "input_seq_step": getattr(args, 'input_seq_step', 1),
+                    "stride": getattr(args, 'stride', 1),
+                    "use_custom_date": getattr(args, 'use_custom_date', False),
+                },
+                tags=["pytorch", "timeseries", "building-optimization", "kaggle"]
+            )
+        
+        # Run experiment
+        run_experiment_mode(args.data_split, args)
+        
+        # Finalize wandb logging
+        if use_wandb:
+            wandb.finish()
 
     print("Done.")
