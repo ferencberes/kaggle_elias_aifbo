@@ -331,7 +331,7 @@ def simple_feature_dataset(
     ]
     first_valid_idx = timeseries_df.notna().all(axis=1).idxmax()
     print(f"First valid index for all required columns: {first_valid_idx}")
-    alma
+    #alma
     timeseries_df = timeseries_df.loc[first_valid_idx:]
 
     if add_dummy_y:
@@ -344,7 +344,7 @@ def simple_feature_dataset(
         timeseries_df.index.hour * 60 + timeseries_df.index.minute
     )
     timeseries_df["day_of_week"] = timeseries_df.index.dayofweek
-    timeseries_df["day_of_year"] = timeseries_df.index.dayofweek
+    timeseries_df["day_of_year"] = timeseries_df.index.dayofyear
     timeseries_df["yeartime_sin"] = np.sin(
         2 * np.pi * timeseries_df["day_of_year"] / 365
     )
