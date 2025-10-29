@@ -80,6 +80,7 @@ TARGET_VARIABLE_NAME = "B205WC000.AM02"  # the target variable to be predicted
 EXAMPLE_PREDICTOR_VARIABLE_NAMES = [
     "B205WC000.AM01",  # a supply temperature chilled water
     "B106WS01.AM54",  # an external temperature
+    #### NO ADDITIONAL PREDICTORS WILL BE USED BY THE MODEL
 
 ]  # example predictor variables
 SUBMISSION_FILE_PATH = f"{OUTPUTS_DIR}/submission_file.csv"

@@ -37,6 +37,8 @@ from tqdm import tqdm
 import wandb
 import sys
 
+from feature_groups import add_room_return_temp_features
+
 def setup_device(device_arg):
     """Setup device based on argument.
     
@@ -93,28 +95,28 @@ EXAMPLE_PREDICTOR_VARIABLE_NAMES = [
     #'B106WS01.AM51',  # light intensity
     #'B106WS01.AM53',  # humidity
     #high abs corr new analysis: above 0.5 abs corr with shift -180min
-    'B205WC001.AM71',# TOTAL VOLUME CHILLED WATER
-    'B205WC000.AM71',# VOLUME CHILLED WATER BP201/202/206
-    'B205WC140.AC21',# PRIMARY VALVE 1
-    'B201RC572.AC61',# VAV SUPPLY AIR 201.C.571
+    #'B205WC001.AM71',# TOTAL VOLUME CHILLED WATER
+    #'B205WC000.AM71',# VOLUME CHILLED WATER BP201/202/206
+    #'B205WC140.AC21',# PRIMARY VALVE 1
+    #'B201RC572.AC61',# VAV SUPPLY AIR 201.C.571
     #high abs corr new analysis: above 0.4 abs corr with shift -180min
-    'B201FC149_1.VT03_2',# ACTIVE SETPOINT TEMP. 201.A.034
-    'B201FC149_1.VT03_1',# USER SETPOINT TEMP. 201.A.034
-    #'B205WC003.AM02',# RETURN TEMP, CHILLED WATER BP201/202/206 - this is not in the data
-    'B201FC149_1.VS01_1',# STATUS STEP VENTILATION 201.A.034
-    'B205WC002.RA001',# SPEED CHILLED WATER PUMP
-    'B201AH163.AC21',# COOLER VALVE
-    'B201FC223_1.VT03_1',# USER SETPOINT TEMP. 201.A.287
-    'B201RC055.AM01',# ROOM TEMPERATURE 201.B.074b
-    'B201FC096_1.AM01',# ROOM TEMPERATURE 201.C.035
-    #'B205WC001.AM02',# RETURN TEMPERATURE CHILLED WATER - this is not in the data
-    'B201AH601.AM15',# RETURN-AIR TEMPERATURE
-    'B201AH164.AC21',# COOLER VALVE
-    'B201RC044.AM02',# ROOM TEMPERATURE 2 201.B.080 Z.6
-    'B201FC288_1.VT03_1',# USER SETPOINT TEMP. 201.C.287
-    'B201FC403_4.AM01',# ROOM TEMPERATURE 201.A.432
-    'B201FC664_2.VT02_1',# ACTIVE SP. TEMP. COOLING 201.C.634
-    #'B205WC140.AM04',# INLET TEMPERATURE HEAT EXCHANGER SEC. - this is not in the data
+    #'B201FC149_1.VT03_2',# ACTIVE SETPOINT TEMP. 201.A.034
+    #'B201FC149_1.VT03_1',# USER SETPOINT TEMP. 201.A.034
+    ##'B205WC003.AM02',# RETURN TEMP, CHILLED WATER BP201/202/206 - this is not in the data
+    #'B201FC149_1.VS01_1',# STATUS STEP VENTILATION 201.A.034
+    #'B205WC002.RA001',# SPEED CHILLED WATER PUMP
+    #'B201AH163.AC21',# COOLER VALVE
+    #'B201FC223_1.VT03_1',# USER SETPOINT TEMP. 201.A.287
+    #'B201RC055.AM01',# ROOM TEMPERATURE 201.B.074b
+    #'B201FC096_1.AM01',# ROOM TEMPERATURE 201.C.035
+    ##'B205WC001.AM02',# RETURN TEMPERATURE CHILLED WATER - this is not in the data
+    #'B201AH601.AM15',# RETURN-AIR TEMPERATURE
+    #'B201AH164.AC21',# COOLER VALVE
+    #'B201RC044.AM02',# ROOM TEMPERATURE 2 201.B.080 Z.6
+    #'B201FC288_1.VT03_1',# USER SETPOINT TEMP. 201.C.287
+    #'B201FC403_4.AM01',# ROOM TEMPERATURE 201.A.432
+    #'B201FC664_2.VT02_1',# ACTIVE SP. TEMP. COOLING 201.C.634
+    ##'B205WC140.AM04',# INLET TEMPERATURE HEAT EXCHANGER SEC. - this is not in the data
 ]
 
 #EXAMPLE_PREDICTOR_VARIABLE_NAMES += external_measurements
@@ -430,6 +432,14 @@ def simple_feature_dataset(
         #print(timeseries_df['is_working_day'].value_counts())
         #print(timeseries_df['is_weekend'].value_counts())
 
+    non_date_features = EXAMPLE_PREDICTOR_VARIABLE_NAMES.copy()
+    #use_custom_sensor_features = False
+    use_custom_sensor_features = True
+    if use_custom_sensor_features:
+        metadata = pd.read_parquet(os.path.join(DATA_DIR, 'kaggle_dl', 'metadata.parquet'))
+        timeseries_df, new_feature_cols = add_room_return_temp_features(metadata, timeseries_df)
+        non_date_features += new_feature_cols
+
     column_names = timeseries_df.columns
     print('Dataset columns:', column_names.tolist())
     
@@ -481,7 +491,7 @@ def simple_feature_dataset(
             i + input_seq_len + predict_ahead, column_names.get_loc("timestamp")
         ].unsqueeze(0)
         selected_features.append(timestamp)
-        # next previous datetime features:
+        # next: datetime features:
         for dt_feature in datetime_features:
             if dt_feature == "timestamp":
                 continue  # already handled
@@ -499,20 +509,20 @@ def simple_feature_dataset(
                 ].unsqueeze(0)
                 selected_features.append(dt_feature_values)
 
-        # finally: numerical (not date related) predictor variables:
-        for predictor in EXAMPLE_PREDICTOR_VARIABLE_NAMES:
+        # finally: not date related predictor variables:
+        for predictor in non_date_features:
             if not predictor in column_names:
                 raise ValueError(
                     f"Predictor variable {predictor} not found in data columns."
                 )
             predictor_values = normalization_fn(
-            data[
-                i : i + input_seq_len : input_seq_step,
-                column_names.get_loc(predictor),
-            ],
-            predictor,
-        )
-        selected_features.append(predictor_values)
+                data[
+                    i : i + input_seq_len : input_seq_step,
+                    column_names.get_loc(predictor),
+                ],
+                predictor,
+            )
+            selected_features.append(predictor_values)
 
         # Concatenate all selected features
         X.append(torch.cat(selected_features))
@@ -979,7 +989,7 @@ def run_experiment_mode(data_split, args):
         # Define and train sklearn models
         models = {
             #"LinearRegression": LinearRegression(),without feature selection it is sensitive to outliers
-            "Lasso": Lasso(alpha=0.01),
+            #"Lasso": Lasso(alpha=0.01),#very slow
             "DecisionTreeRegressor": DecisionTreeRegressor(max_depth=5),
             "XGBRegressor(10,2)": XGBRegressor(n_estimators=10, max_depth=2, learning_rate=0.01),
             "XGBRegressor(10,5)": XGBRegressor(n_estimators=10, max_depth=5, learning_rate=0.01),
