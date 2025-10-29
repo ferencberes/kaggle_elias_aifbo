@@ -120,6 +120,9 @@ def calculate_correlations_for_split(split_dir, all_sensor_ids, target_variable,
     # Add split information
     results_df['data_split'] = os.path.basename(split_dir)
     
+    # Calculate ranks based on absolute correlation (1 = highest absolute correlation)
+    results_df['abs_correlation_rank'] = results_df['abs_correlation'].rank(method='dense', ascending=False)
+    
     print(f"  Computed correlations for {len(results_df)} sensors")
     print(f"  Non-zero correlations: {(results_df['abs_correlation'] > 0).sum()}")
     
@@ -144,10 +147,11 @@ def pool_and_summarize_correlations(all_results, output_dir):
     print(f"Unique sensors: {combined_df['sensor_id'].nunique()}")
     print(f"Data splits: {combined_df['data_split'].nunique()}")
     
-    # Calculate mean correlations per sensor
+    # Calculate mean correlations and rank statistics per sensor
     summary_stats = combined_df.groupby('sensor_id').agg({
         'correlation': ['mean', 'std', 'count'],
-        'abs_correlation': ['mean', 'std', 'max']
+        'abs_correlation': ['mean', 'std', 'max', 'min'],
+        'abs_correlation_rank': ['mean', 'std', 'max', 'min']
     }).round(6)
     
     # Flatten column names
@@ -159,14 +163,19 @@ def pool_and_summarize_correlations(all_results, output_dir):
         'count_correlation': 'split_count',
         'mean_abs_correlation': 'mean_abs_correlation',
         'std_abs_correlation': 'std_abs_correlation',
-        'max_abs_correlation': 'max_abs_correlation'
+        'max_abs_correlation': 'max_abs_correlation',
+        'min_abs_correlation': 'min_abs_correlation',
+        'mean_abs_correlation_rank': 'mean_rank',
+        'std_abs_correlation_rank': 'std_rank',
+        'max_abs_correlation_rank': 'max_rank',
+        'min_abs_correlation_rank': 'min_rank'
     })
     
     # Reset index to make sensor_id a column
     summary_stats = summary_stats.reset_index()
     
-    # Sort by mean absolute correlation (descending)
-    summary_stats = summary_stats.sort_values('mean_abs_correlation', ascending=False)
+    # Sort by mean rank (ascending - lower rank means higher correlation)
+    summary_stats = summary_stats.sort_values('mean_rank', ascending=True)
     
     # Export summary
     summary_file = os.path.join(output_dir, "correlation_summary_across_splits.csv")
@@ -181,9 +190,17 @@ def pool_and_summarize_correlations(all_results, output_dir):
     print(f"Sensors with non-zero correlations: {(summary_stats['mean_abs_correlation'] > 0).sum()}")
     print(f"Sensors present in all splits: {(summary_stats['split_count'] == combined_df['data_split'].nunique()).sum()}")
     
-    print(f"\n🔝 TOP 10 SENSORS BY MEAN ABSOLUTE CORRELATION:")
-    top_sensors = summary_stats.head(10)[['sensor_id', 'mean_correlation', 'mean_abs_correlation', 'split_count']]
+    print(f"\n🔝 TOP 10 SENSORS BY MEAN RANK (BASED ON ABSOLUTE CORRELATION):")
+    top_sensors = summary_stats.head(10)[['sensor_id', 'mean_correlation', 'mean_abs_correlation', 'mean_rank', 'std_rank', 'split_count']]
     print(top_sensors.to_string(index=False))
+    
+    print(f"\n📊 RANK STATISTICS SUMMARY:")
+    print(f"Best possible rank (highest correlation): 1.0")
+    print(f"Worst possible rank (lowest correlation): {combined_df['sensor_id'].nunique()}")
+    print(f"Average rank across all sensors: {summary_stats['mean_rank'].mean():.2f}")
+    print(f"Sensors with mean rank ≤ 10: {(summary_stats['mean_rank'] <= 10).sum()}")
+    print(f"Sensors with mean rank ≤ 50: {(summary_stats['mean_rank'] <= 50).sum()}")
+    print(f"Sensors with mean rank ≤ 100: {(summary_stats['mean_rank'] <= 100).sum()}")
     
     print(f"\n💾 FILES EXPORTED:")
     print(f"  Summary statistics: {summary_file}")

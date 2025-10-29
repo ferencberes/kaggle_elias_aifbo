@@ -1,12 +1,12 @@
 external_weather_measurements = [
-    'B106WS01.AM50',  # light direction
-    'B106WS01.AM51',  # light intensity
+    'B106WS01.AM50',  # light direction - follows daily / annual pattern
+    'B106WS01.AM51',  # light intensity - follows daily / annual pattern
     'B106WS01.AM52',  # air pressure
-    'B106WS01.AM53',  # humidity
+    'B106WS01.AM53',  # humidity - could be relevant
     'B106WS01.AM54',  # external temperature
     'B106WS01.AM54_1',  # outdoor air 30min (AUL-TEMP)
     'B106WS01.AM54_2',  # outdoor air 24h (AUL-TEMP)
-    'B106WS01.AM55',  # precipitation
+    'B106WS01.AM55',  # precipitation - too sparse
     'B106WS01.AM56',  # wind direction
     'B106WS01.AM57',  # wind speed
 ]
