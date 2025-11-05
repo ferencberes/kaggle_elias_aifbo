@@ -122,6 +122,7 @@ def calculate_correlations_for_split(split_dir, all_sensor_ids, target_variable,
     
     # Calculate ranks based on absolute correlation (1 = highest absolute correlation)
     results_df['abs_correlation_rank'] = results_df['abs_correlation'].rank(method='dense', ascending=False)
+    results_df = results_df.sort_values('abs_correlation_rank').reset_index(drop=True)
     
     print(f"  Computed correlations for {len(results_df)} sensors")
     print(f"  Non-zero correlations: {(results_df['abs_correlation'] > 0).sum()}")
@@ -225,9 +226,29 @@ def main():
                        help='Output directory for results')
     parser.add_argument('--target_shift_minutes', type=int, default=0,
                        help='Shift target variable by specified minutes to measure correlation with future values (default: 0)')
+    parser.add_argument('--test_feature_information_csv', type=str,
+                       default='test_set_feature_information.csv',
+                       help='Path to save test set feature information CSV')
+    parser.add_argument('--missing_threshold', type=float, default=0.2,
+                       help='Maximum allowed missing ratio for features to be considered (default: 0.2)')
+    parser.add_argument('--nunique_threshold', type=int, default=2,
+                       help='Minimum number of unique values for features to be considered (default: 2)')
     
     args = parser.parse_args()
     
+    if os.path.exists(args.test_feature_information_csv):
+        print(f"Loading test set feature information from {args.test_feature_information_csv}...")
+        feature_info_df = pd.read_csv(args.test_feature_information_csv, index_col=0)
+        potential_features = feature_info_df[
+            (feature_info_df['missing_ratio'] < args.missing_threshold) &
+            (feature_info_df['nunique_count'] > args.nunique_threshold)
+        ].copy()
+        print(f"Number of potential features based on criteria: {len(potential_features)}")
+        filtered_columns = potential_features.index.tolist()
+    else:
+        filtered_columns = load_all_sensor_ids(args.metadata_path)
+    #print(f"Filtered columns: {filtered_columns}")
+
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
     
@@ -241,9 +262,7 @@ def main():
     if not os.path.exists(args.metadata_path):
         print(f"Error: Metadata file not found: {args.metadata_path}")
         return
-    
-    all_sensor_ids = load_all_sensor_ids(args.metadata_path)
-    
+
     # Step 2: Get data splits
     if not os.path.exists(args.splits_dir):
         print(f"Error: Splits directory not found: {args.splits_dir}")
@@ -258,29 +277,29 @@ def main():
     print(f"Data splits to process: {data_splits}")
     
     # Step 3: Process each split
-    all_results = []
+    results = []
     
     for split_name in data_splits:
         split_path = os.path.join(args.splits_dir, split_name)
         
         # Calculate correlations for this split
         split_results = calculate_correlations_for_split(
-            split_path, all_sensor_ids, args.target_variable, args.target_shift_minutes
+            split_path, filtered_columns, args.target_variable, args.target_shift_minutes
         )
         
         if split_results is not None:
             # Export individual split results
             export_split_correlations(split_results, args.output_dir, split_name)
-            all_results.append(split_results)
+            results.append(split_results)
         else:
             print(f"  Skipping split {split_name} due to errors")
     
-    if not all_results:
+    if not results:
         print("No valid results found!")
         return
     
     # Step 4: Pool and summarize results
-    summary_stats, combined_df = pool_and_summarize_correlations(all_results, args.output_dir)
+    summary_stats, combined_df = pool_and_summarize_correlations(results, args.output_dir)
     
     print(f"\n✅ Analysis completed! Results saved to: {args.output_dir}")
 
