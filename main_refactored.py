@@ -23,7 +23,6 @@ import argparse
 import csv
 from datetime import datetime, date
 import glob
-import holidays
 from itertools import chain
 import os
 import numpy as np
@@ -333,7 +332,7 @@ def simple_eval_and_submission_creation(
     return res
 
 def simple_feature_dataset(
-    full_multivariate_timeseries_df, add_dummy_y=False, normalize=False, feature_hours=1, input_seq_step=1, stride=1, use_custom_date_features=False
+    full_multivariate_timeseries_df, add_dummy_y=False, normalize=False, feature_hours=1, input_seq_step=1, stride=1, use_custom_date_features=False, use_custom_sensor_features=False
 ):
     """
     Create a simple feature dataset from the full multivariate timeseries dataframe.
@@ -348,7 +347,7 @@ def simple_feature_dataset(
     """
     info = {}
 
-    input_seq_len = int(60 / RESAMPLE_FREQ_MIN) * feature_hours  # hours
+    input_seq_len = int( int(60 / RESAMPLE_FREQ_MIN) * feature_hours)  # hours
     predict_ahead = int(60 / RESAMPLE_FREQ_MIN) * 3  # hours
 
     # restrict to only relevant/valid data:
@@ -433,8 +432,6 @@ def simple_feature_dataset(
         #print(timeseries_df['is_weekend'].value_counts())
 
     non_date_features = EXAMPLE_PREDICTOR_VARIABLE_NAMES.copy()
-    #use_custom_sensor_features = False
-    use_custom_sensor_features = True
     if use_custom_sensor_features:
         metadata = pd.read_parquet(os.path.join(DATA_DIR, 'kaggle_dl', 'metadata.parquet'))
         timeseries_df, new_feature_cols = add_room_return_temp_features(metadata, timeseries_df)
@@ -707,8 +704,6 @@ def get_data_file_paths(train_start, train_end, test_start=None, test_end=None):
             return f"{year}-{month - 1:02d}"
 
     def get_month_paths(start_date, end_date):
-        
-
         """Get file paths for months in range."""
         paths = []
         start_year, start_month = map(int, start_date.split('-'))
@@ -731,15 +726,17 @@ def get_data_file_paths(train_start, train_end, test_start=None, test_end=None):
 
     if test_start is None or test_end is None:
         print("No test date range provided, by default using next two months after training end date.")
-        test_start = get_next_month(train_end)
-        test_end = get_next_month(test_start)
+        #test_start = get_next_month(train_end)
+        #test_end = get_next_month(test_start)
+        test_start_datetime = None
+        test_file_paths = []
+    else:
+        # Create test start datetime from test_start parameter
+        test_year, test_month = map(int, test_start.split('-'))
+        test_start_datetime = datetime(test_year, test_month, 1)
 
-    # Create test start datetime from test_start parameter
-    test_year, test_month = map(int, test_start.split('-'))
-    test_start_datetime = datetime(test_year, test_month, 1)
-
-    # we load one month before test start for proper feature extraction:
-    test_file_paths = get_month_paths(get_previous_month(test_start), test_end)
+        # we load one month before test start for proper feature extraction:
+        test_file_paths = get_month_paths(get_previous_month(test_start), test_end)
     
     return train_file_paths, test_file_paths, test_start_datetime
 
@@ -777,7 +774,6 @@ def check_preprocessed_files_exist(data_split_folder):
             print(f"Preprocessed test file not found: {test_file}")
         return False
 
-
 def run_resample_mode(train_start, train_end, test_start=None, test_end=None):
     """Run data resampling mode: load raw data, resample, and save to parquet files."""
     print("Running in RESAMPLE mode...")
@@ -796,7 +792,7 @@ def run_resample_mode(train_start, train_end, test_start=None, test_end=None):
     
     if len(test_file_paths) == 0:
         print("Error: No test files found for the specified date range!")
-        sys.exit(1)
+        #sys.exit(1)
     
     # Create data split folder
     data_split_folder = get_data_split_folder(train_start, train_end, test_start, test_end)
@@ -814,13 +810,14 @@ def run_resample_mode(train_start, train_end, test_start=None, test_end=None):
         save_load_df=train_save_path,
     )
     
-    # Process test data  
-    print("Processing test data...")
-    test_save_path = os.path.join(data_split_dir, "preproc_test_input_df.parquet")
-    test_input_df = simple_load_and_resample_data(
-        test_file_paths,
-        save_load_df=test_save_path,
-    )
+    if len(test_file_paths) > 0:
+        # Process test data  
+        print("Processing test data...")
+        test_save_path = os.path.join(data_split_dir, "preproc_test_input_df.parquet")
+        test_input_df = simple_load_and_resample_data(
+            test_file_paths,
+            save_load_df=test_save_path,
+        )
     
     # Save metadata about the data split
     metadata = {
@@ -828,26 +825,27 @@ def run_resample_mode(train_start, train_end, test_start=None, test_end=None):
         'train_end': train_end,
         'test_start': test_start,  
         'test_end': test_end,
-        'test_start_datetime': test_start_datetime.isoformat(),
+        'test_start_datetime': test_start_datetime.isoformat() if test_start_datetime else None,
         'train_files_count': len(train_file_paths),
         'test_files_count': len(test_file_paths),
         'train_shape': list(full_train_df.shape),
-        'test_shape': list(test_input_df.shape),
+        'test_shape': list(test_input_df.shape) if len(test_file_paths) > 0 else None,
         'train_time_min': full_train_df.index.min().isoformat(),
         'train_time_max': full_train_df.index.max().isoformat(),
-        'test_time_min': test_input_df.index.min().isoformat(),
-        'test_time_max': test_input_df.index.max().isoformat(),
+        'test_time_min': test_input_df.index.min().isoformat() if len(test_file_paths) > 0 else None,
+        'test_time_max': test_input_df.index.max().isoformat() if len(test_file_paths) > 0 else None,
         'created_at': datetime.now().isoformat()
     }
     
-    metadata_path = os.path.join(data_split_dir, "metadata.json")
+    metadata_path = os.path.join(data_split_dir, "split_metadata.json")
     import json
     with open(metadata_path, 'w') as f:
         json.dump(metadata, f, indent=2)
     
     print(f"Data resampling completed successfully!")
     print(f"Training data shape: {full_train_df.shape}")
-    print(f"Test data shape: {test_input_df.shape}")
+    if len(test_file_paths) > 0:
+        print(f"Test data shape: {test_input_df.shape}")
     print(f"Files saved to: {data_split_dir}")
     print(f"Metadata saved to: {metadata_path}")
 
@@ -859,18 +857,21 @@ def run_experiment_mode(data_split, args):
     data_split_dir = os.path.join(OUTPUTS_DIR, data_split)
     
     # Check if preprocessed files exist
-    if not check_preprocessed_files_exist(data_split):
-        print(f"Error: Preprocessed files not found in {data_split_dir}")
-        print("Please run resample mode first to generate the data.")
-        sys.exit(1)
+    #if not check_preprocessed_files_exist(data_split):
+    #    print(f"Error: Preprocessed files not found in {data_split_dir}")
+    #    print("Please run resample mode first to generate the data.")
+    #    sys.exit(1)
     
     # Load metadata
-    metadata_path = os.path.join(data_split_dir, "metadata.json")
+    metadata_path = os.path.join(data_split_dir, "split_metadata.json")
     if os.path.exists(metadata_path):
         import json
         with open(metadata_path, 'r') as f:
             metadata = json.load(f)
-        test_start_datetime = datetime.fromisoformat(metadata['test_start_datetime'])
+        test_start_datetime = metadata['test_start_datetime']
+        if test_start_datetime:
+            test_start_datetime = datetime.fromisoformat(test_start_datetime)
+
         print(f"Loaded data split metadata: {metadata['train_start']} to {metadata['train_end']} (train), {metadata['test_start']} to {metadata['test_end']} (test)")
     else:
         raise RuntimeError("metadata.json not found, using default test start datetime")
@@ -880,13 +881,17 @@ def run_experiment_mode(data_split, args):
     train_file = os.path.join(data_split_dir, "preproc_full_train_df.parquet")
     full_train_df = pd.read_parquet(train_file)
     
-    print("Loading preprocessed test data...")
-    test_file = os.path.join(data_split_dir, "preproc_test_input_df.parquet")  
-    test_input_df = pd.read_parquet(test_file)
+    test_file = os.path.join(data_split_dir, "preproc_test_input_df.parquet")
+    if os.path.exists(test_file):
+        print("Loading preprocessed test data...")
+        test_input_df = pd.read_parquet(test_file)
+    else:
+        test_input_df = None
     
     print("Preprocessed data loaded successfully.")
     print(f"Training data shape: {full_train_df.shape}")
-    print(f"Test data shape: {test_input_df.shape}")
+    if test_input_df is not None:
+        print(f"Test data shape: {test_input_df.shape}")
     
     # Continue with the rest of the experiment pipeline
     tzinfo = full_train_df.index.tzinfo
@@ -894,13 +899,16 @@ def run_experiment_mode(data_split, args):
     # Turn it into torch datasets for simple prediction from past to future, with simple features:
     full_train_dataset, full_train_dataset_info = simple_feature_dataset(
         full_train_df, add_dummy_y=False, normalize=True, feature_hours=args.feature_hours, 
-        input_seq_step=args.input_seq_step, stride=args.stride, use_custom_date_features=args.use_custom_date
+        input_seq_step=args.input_seq_step, stride=args.stride, use_custom_date_features=args.use_custom_date, use_custom_sensor_features=args.use_custom_sensor
     )
-    #stride is set to 1 for test dataset, because we want predictions for every time step in test set
-    test_input_dataset, _ = simple_feature_dataset(
-        test_input_df, add_dummy_y=True, normalize=full_train_dataset_info, feature_hours=args.feature_hours, 
-        input_seq_step=args.input_seq_step, stride=1, use_custom_date_features=args.use_custom_date
-    )
+
+    if test_input_df is not None:
+        #stride is set to 1 for test dataset, because we want predictions for every time step in test set
+        test_input_dataset, _ = simple_feature_dataset(
+            test_input_df, add_dummy_y=True, normalize=full_train_dataset_info, feature_hours=args.feature_hours, 
+            input_seq_step=args.input_seq_step, stride=1, use_custom_date_features=args.use_custom_date, use_custom_sensor_features=args.use_custom_sensor
+        )
+        test_input_loader = DataLoader(test_input_dataset, batch_size=64, shuffle=False)
 
     # Turn it into data loaders for training, validation, and submission (where submission loader differs in that
     # it has no target variable values, i.e. y):
@@ -917,7 +925,6 @@ def run_experiment_mode(data_split, args):
         generator=torch.Generator(device=torch.get_default_device()),
     )
     vali_loader = DataLoader(vali_dataset, batch_size=64, shuffle=False)
-    test_input_loader = DataLoader(test_input_dataset, batch_size=64, shuffle=False)
 
     # Setup output directory for this experiment
     experiment_output_dir = os.path.join(data_split_dir, "experiments", args.name)
@@ -940,7 +947,7 @@ def run_experiment_mode(data_split, args):
         },
         'data_info': {
             'train_shape': list(full_train_df.shape),
-            'test_shape': list(test_input_df.shape),
+            'test_shape': list(test_input_df.shape) if test_input_df is not None else None,
             'target_variable': TARGET_VARIABLE_NAME,
             'predictor_variables': EXAMPLE_PREDICTOR_VARIABLE_NAMES,
             'datetime_features': full_train_dataset_info.get('datetime_features', []),
@@ -1023,22 +1030,24 @@ def run_experiment_mode(data_split, args):
             generate_timeseries_prediction=True,
             save_fig=os.path.join(experiment_output_dir, "plot_vali.png"),
         )
-        res_eval_test_input = simple_eval_and_submission_creation(
-            test_input_loader,
-            model,
-            loss_fn=None,  # no loss function for test set evaluation, because there is no ground truth in raw data
-            generate_timeseries_prediction=True,
-            save_fig=os.path.join(experiment_output_dir, "plot_test.png"),
-            create_submission_df=test_start_datetime,
-        )
-        test_prediction_df = res_eval_test_input["ys_pred_df"]
 
-        test_prediction_df_for_csv = test_prediction_df.copy()
-        test_prediction_df_for_csv.index = test_prediction_df.index.tz_localize(tzinfo)
-        test_prediction_df_for_csv.index = test_prediction_df.index.strftime(
-            SUBMISSION_FILE_DATETIME_FORMAT
-        )
-        test_prediction_df_for_csv.index.name = "ID"
+        if test_input_df is not None:
+            res_eval_test_input = simple_eval_and_submission_creation(
+                test_input_loader,
+                model,
+                loss_fn=None,  # no loss function for test set evaluation, because there is no ground truth in raw data
+                generate_timeseries_prediction=True,
+                save_fig=os.path.join(experiment_output_dir, "plot_test.png"),
+                create_submission_df=test_start_datetime,
+            )
+            test_prediction_df = res_eval_test_input["ys_pred_df"]
+
+            test_prediction_df_for_csv = test_prediction_df.copy()
+            test_prediction_df_for_csv.index = test_prediction_df.index.tz_localize(tzinfo)
+            test_prediction_df_for_csv.index = test_prediction_df.index.strftime(
+                SUBMISSION_FILE_DATETIME_FORMAT
+            )
+            test_prediction_df_for_csv.index.name = "ID"
         
         # Log final evaluation metrics to wandb
         if args.wandb:
@@ -1059,18 +1068,19 @@ def run_experiment_mode(data_split, args):
                 "batch_size": 64,
                 "loss_function": "MSELoss",
             })
-        
-        # write the submission file that can then be uploaded to the competition page:
-        submission_file_path = os.path.join(experiment_output_dir, "submission_file.csv")
-        test_prediction_df_for_csv.to_csv(
-            submission_file_path,
-            index=True,
-            quoting=csv.QUOTE_ALL,
-        )
-        
+
         print(f"Experiment completed successfully!")
         print(f"Results saved to: {experiment_output_dir}")
-        print(f"Submission file: {submission_file_path}")
+        
+        if test_input_df is not None:
+            # write the submission file that can then be uploaded to the competition page:
+            submission_file_path = os.path.join(experiment_output_dir, "submission_file.csv")
+            test_prediction_df_for_csv.to_csv(
+                submission_file_path,
+                index=True,
+                quoting=csv.QUOTE_ALL,
+            )
+            print(f"Submission file: {submission_file_path}")
 
 
 def run_summary_mode(experiment_name, data_splits=None, summary_dir=None):
@@ -1193,7 +1203,7 @@ if __name__ == "__main__":
                                   help='Use sklearn models instead of PyTorch model')
     experiment_parser.add_argument('--wandb', action='store_true',
                                   help='Enable wandb logging')
-    experiment_parser.add_argument('--feature_hours', type=int, default=1,
+    experiment_parser.add_argument('--feature_hours', type=float, default=1.0,
                                   help='Number of past hours to use as features (default: 1)')
     experiment_parser.add_argument('--input_seq_step', type=int, default=1,
                                   help='Step size for input sequence (default: 1)')
@@ -1201,6 +1211,8 @@ if __name__ == "__main__":
                                   help='Stride for moving the input window (default: 1)')
     experiment_parser.add_argument('--use_custom_date', action='store_true',
                                   help='Use custom date features in the dataset')
+    experiment_parser.add_argument('--use_custom_sensor', action='store_true',
+                                  help='Use custom sensor features in the dataset')
     experiment_parser.add_argument('--data_splits', type=str, nargs='+', default=None,
                                   help='List of data split folder names to run experiments on (e.g., train_2022-01_to_2022-03_test_2022-04_to_2022-05)')
     
