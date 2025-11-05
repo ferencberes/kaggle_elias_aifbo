@@ -80,6 +80,10 @@ TARGET_VARIABLE_NAME = "B205WC000.AM02"  # the target variable to be predicted
 EXAMPLE_PREDICTOR_VARIABLE_NAMES = [
     "B205WC000.AM01",  # a supply temperature chilled water
     "B106WS01.AM54",  # an external temperature
+    #extra features
+    # made it worse
+    #"B205WC001.AM01", # a supply temperature chilled water - it looks to be too sparse during the test period
+    #"B205WC002.RA001", # SPEED CHILLED WATER PUMP
 ]  # example predictor variables
 SUBMISSION_FILE_PATH = f"{OUTPUTS_DIR}/submission_file.csv"
 SUBMISSION_FILE_TARGET_VARIABLE_COLUMN_NAME = "TARGET_VARIABLE"
@@ -341,6 +345,7 @@ def simple_feature_dataset(
         timeseries_df.index.hour * 60 + timeseries_df.index.minute
     )
     timeseries_df["day_of_week"] = timeseries_df.index.dayofweek
+    """#due to the bug this feature had no meaning, commenting out for now
     timeseries_df["day_of_year"] = timeseries_df.index.dayofweek
     timeseries_df["yeartime_sin"] = np.sin(
         2 * np.pi * timeseries_df["day_of_year"] / 365
@@ -348,6 +353,8 @@ def simple_feature_dataset(
     timeseries_df["yeartime_cos"] = np.cos(
         2 * np.pi * timeseries_df["day_of_year"] / 365
     )
+    """
+
     timeseries_df["daytime_sin"] = np.sin(
         2 * np.pi * timeseries_df["minute_of_day"] / (24 * 60)
     )
@@ -385,11 +392,26 @@ def simple_feature_dataset(
 
     X = []
     Y = []
+
     for i in range(0, data.shape[0] - input_seq_len - predict_ahead, stride):
+        selected_features = []
+        
         timestamp = data[
             i + input_seq_len + predict_ahead, column_names.get_loc("timestamp")
         ].unsqueeze(0)
+        selected_features.append(timestamp)
 
+        for j in range(len(EXAMPLE_PREDICTOR_VARIABLE_NAMES)):
+            example_predictor_variable = normalization_fn(
+                data[
+                    i : i + input_seq_len : input_seq_step,
+                    column_names.get_loc(EXAMPLE_PREDICTOR_VARIABLE_NAMES[j]),
+                ],
+                EXAMPLE_PREDICTOR_VARIABLE_NAMES[j],
+            )
+            selected_features.append(example_predictor_variable)
+
+        """
         example_predictor_variable_0 = normalization_fn(
             data[
                 i : i + input_seq_len : input_seq_step,
@@ -404,25 +426,33 @@ def simple_feature_dataset(
             ],
             EXAMPLE_PREDICTOR_VARIABLE_NAMES[1],
         )
+        """
+
         daytime_sin = data[
             i + input_seq_len + predict_ahead, column_names.get_loc("daytime_sin")
         ].unsqueeze(0)
+        selected_features.append(daytime_sin)
+
         daytime_cos = data[
             i + input_seq_len + predict_ahead, column_names.get_loc("daytime_cos")
         ].unsqueeze(0)
+        selected_features.append(daytime_cos)
+
         day_of_week = torch.nn.functional.one_hot(
             data[
                 i + input_seq_len + predict_ahead, column_names.get_loc("day_of_week")
             ].to(dtype=torch.long),
             num_classes=7,
         )
+        selected_features.append(day_of_week)
+        """
         yeartime_sin = data[
             i + input_seq_len + predict_ahead, column_names.get_loc("yeartime_sin")
         ].unsqueeze(0)
         yeartime_cos = data[
             i + input_seq_len + predict_ahead, column_names.get_loc("yeartime_cos")
         ].unsqueeze(0)
-
+        
         X.append(
             torch.cat(
                 [
@@ -430,13 +460,16 @@ def simple_feature_dataset(
                     example_predictor_variable_0,
                     example_predictor_variable_1,
                     day_of_week,
-                    yeartime_sin,
-                    yeartime_cos,
+                    #yeartime_sin,
+                    #yeartime_cos,
                     daytime_sin,
                     daytime_cos,
                 ]
             )
         )
+        """
+
+        X.append(torch.cat(selected_features))
 
         target_variable = data[
             i + input_seq_len + predict_ahead,
