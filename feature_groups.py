@@ -71,3 +71,10 @@ def add_room_return_temp_features(metadata, timeseries_df):
         #print(f"Added feature: {feature_name}")
 
     return timeseries_df, new_feature_cols
+
+def get_cooler_valves(metadata, enable_rooms=False):
+    cooler_valves = metadata[metadata['channel']=='AC21']
+    if enable_rooms:
+        return cooler_valves
+    else:
+        return cooler_valves[cooler_valves['room'].isnull()]

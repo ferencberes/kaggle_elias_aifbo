@@ -31,12 +31,22 @@ import torchvision
 from tqdm import tqdm
 
 torch.manual_seed(0)
-torch.set_default_device("cuda" if torch.cuda.is_available() else "cpu")
+torch.set_default_device("cuda:1" if torch.cuda.is_available() else "cpu")
 print(torch.get_default_device())
 torch.set_default_dtype(
     torch.float64
 )  # with lower than float64 precision, the eventual timestamps may be off
 
+data_dir = "data/kaggle_dl"
+metadata = pd.read_parquet(os.path.join(data_dir, "metadata.parquet"))
+feature_information = pd.read_csv('test_set_feature_information.csv', index_col=0)
+potential_features = feature_information[
+    (feature_information['missing_ratio'] < 0.2) &
+    (feature_information['nunique_count'] > 2)
+].copy()
+potential_features = potential_features.index.tolist()
+# keep only features that are available during the test set period
+metadata = metadata[metadata['object_id'].isin(potential_features)].copy()
 
 DATA_DIR = "data"
 OUTPUTS_DIR = "outputs"
@@ -85,6 +95,21 @@ EXAMPLE_PREDICTOR_VARIABLE_NAMES = [
     #"B205WC001.AM01", # a supply temperature chilled water - it looks to be too sparse during the test period
     #"B205WC002.RA001", # SPEED CHILLED WATER PUMP
 ]  # example predictor variables
+
+from feature_groups import get_cooler_valves
+cooler_valves = get_cooler_valves(metadata, enable_rooms=True)#False)
+cooler_valves_ids = cooler_valves['object_id'].unique().tolist()
+EXAMPLE_PREDICTOR_VARIABLE_NAMES += cooler_valves_ids
+
+print("Predictor variables:")
+print(EXAMPLE_PREDICTOR_VARIABLE_NAMES)
+print(f"Using {len(EXAMPLE_PREDICTOR_VARIABLE_NAMES)} predictor variables.")
+print('Do you want to proceed? (y/n)')
+proceed = input()
+if proceed.lower() != 'y':
+    print("Exiting.")
+    exit()
+
 SUBMISSION_FILE_PATH = f"{OUTPUTS_DIR}/submission_file.csv"
 SUBMISSION_FILE_TARGET_VARIABLE_COLUMN_NAME = "TARGET_VARIABLE"
 SUBMISSION_FILE_DATETIME_FORMAT = "%Y-%m-%d_%H:%M:%S"
@@ -401,33 +426,6 @@ def simple_feature_dataset(
         ].unsqueeze(0)
         selected_features.append(timestamp)
 
-        for j in range(len(EXAMPLE_PREDICTOR_VARIABLE_NAMES)):
-            example_predictor_variable = normalization_fn(
-                data[
-                    i : i + input_seq_len : input_seq_step,
-                    column_names.get_loc(EXAMPLE_PREDICTOR_VARIABLE_NAMES[j]),
-                ],
-                EXAMPLE_PREDICTOR_VARIABLE_NAMES[j],
-            )
-            selected_features.append(example_predictor_variable)
-
-        """
-        example_predictor_variable_0 = normalization_fn(
-            data[
-                i : i + input_seq_len : input_seq_step,
-                column_names.get_loc(EXAMPLE_PREDICTOR_VARIABLE_NAMES[0]),
-            ],
-            EXAMPLE_PREDICTOR_VARIABLE_NAMES[0],
-        )
-        example_predictor_variable_1 = normalization_fn(
-            data[
-                i : i + input_seq_len : input_seq_step,
-                column_names.get_loc(EXAMPLE_PREDICTOR_VARIABLE_NAMES[1]),
-            ],
-            EXAMPLE_PREDICTOR_VARIABLE_NAMES[1],
-        )
-        """
-
         daytime_sin = data[
             i + input_seq_len + predict_ahead, column_names.get_loc("daytime_sin")
         ].unsqueeze(0)
@@ -469,6 +467,41 @@ def simple_feature_dataset(
         )
         """
 
+        for j in range(len(EXAMPLE_PREDICTOR_VARIABLE_NAMES)):
+            #col_name = EXAMPLE_PREDICTOR_VARIABLE_NAMES[j]
+            #if col_name in cooler_valves_ids:
+            #    # do not use normalization for cooler valves
+            #    example_predictor_variable = data[
+            #        i : i + input_seq_len : input_seq_step,
+            #        column_names.get_loc(col_name),
+            #    ]
+            #else:
+            example_predictor_variable = normalization_fn(
+                data[
+                    i : i + input_seq_len : input_seq_step,
+                    column_names.get_loc(EXAMPLE_PREDICTOR_VARIABLE_NAMES[j]),
+                ],
+                EXAMPLE_PREDICTOR_VARIABLE_NAMES[j],
+            )
+            selected_features.append(example_predictor_variable)
+
+        """
+        example_predictor_variable_0 = normalization_fn(
+            data[
+                i : i + input_seq_len : input_seq_step,
+                column_names.get_loc(EXAMPLE_PREDICTOR_VARIABLE_NAMES[0]),
+            ],
+            EXAMPLE_PREDICTOR_VARIABLE_NAMES[0],
+        )
+        example_predictor_variable_1 = normalization_fn(
+            data[
+                i : i + input_seq_len : input_seq_step,
+                column_names.get_loc(EXAMPLE_PREDICTOR_VARIABLE_NAMES[1]),
+            ],
+            EXAMPLE_PREDICTOR_VARIABLE_NAMES[1],
+        )
+        """
+
         X.append(torch.cat(selected_features))
 
         target_variable = data[
@@ -506,12 +539,51 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn):
             y_core = self.mlp(x_core)
             return torch.cat([timestamp_of_prediction, y_core], dim=1)
 
+    class ChannelWiseAIFBOModel(nn.Module):
+        def __init__(self, input_size, hidden_other=128, hidden_cooler=64):
+            super().__init__()
+            print(f"Input size: {input_size}")# timestamp has already been excluded from input_size
+            input_seq_len = int(60 / RESAMPLE_FREQ_MIN) * 1  # hours
+            self.cooler_valve_input_size = len(cooler_valves_ids) * input_seq_len
+            print(f"Cooler valve input size: {self.cooler_valve_input_size}")
+            self.other_input_size = input_size - self.cooler_valve_input_size
+            print(f"Other input size: {self.other_input_size}")
+            self.mlp_other = torchvision.ops.MLP(
+                in_channels=self.other_input_size,
+                hidden_channels=[hidden_other, hidden_other],
+                norm_layer=nn.LayerNorm,
+            ).to(dtype=torch.get_default_dtype())
+            self.mlp_cooler_valves = torchvision.ops.MLP(
+                in_channels=self.cooler_valve_input_size,
+                hidden_channels=[hidden_cooler, hidden_cooler],
+                norm_layer=nn.LayerNorm,
+            ).to(dtype=torch.get_default_dtype())
+            self.final_mlp = torchvision.ops.MLP(
+                in_channels=hidden_other + hidden_cooler,
+                hidden_channels=[128, 1],
+                norm_layer=nn.LayerNorm,
+            ).to(dtype=torch.get_default_dtype())
+
+        def forward(self, x):
+            timestamp_of_prediction, x_other, x_cooler = (
+                x[:, :1],
+                x[:, 1 : -self.cooler_valve_input_size],# a few datetime features + other predictors
+                x[:, -self.cooler_valve_input_size :],# cooler valve predictors
+            )
+            y_other = self.mlp_other(x_other)
+            y_cooler = self.mlp_cooler_valves(x_cooler)
+            y_core = self.final_mlp(torch.cat([y_other, y_cooler], dim=1))
+            return torch.cat([timestamp_of_prediction, y_core], dim=1)
+
     x, _ = next(iter(train_loader))
     input_size = (
         x.shape[-1] - 1
     )  # Get the input size from the first batch, subtract 1 for the timestamp
 
-    model = SimpleAIFBOModel(input_size=input_size)
+    #model = SimpleAIFBOModel(input_size=input_size)
+
+    #originally suply cooler temp and external temp were good predictors - give them more hidden dimensions than cooler valves
+    model = ChannelWiseAIFBOModel(input_size=input_size, hidden_other=128, hidden_cooler=64)
     optimizer = torch.optim.Adam(model.parameters(), lr=2.5e-4)
 
     for epoch in range(200):
@@ -594,7 +666,7 @@ if __name__ == "__main__":
         generator=torch.Generator(device=torch.get_default_device()),
     )
     vali_loader = DataLoader(vali_dataset, batch_size=64, shuffle=False)
-    test_input_loader = DataLoader(test_input_dataset, batch_size=64, shuffle=False)
+    test_input_loader = DataLoader(test_input_dataset, batch_size=8, shuffle=False)
 
     # Define loss function, model, and perform training:
     loss_fn = nn.MSELoss()
