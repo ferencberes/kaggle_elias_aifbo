@@ -31,7 +31,7 @@ import torchvision
 from tqdm import tqdm
 
 torch.manual_seed(0)
-torch.set_default_device("cuda:1" if torch.cuda.is_available() else "cpu")
+torch.set_default_device("cuda:3" if torch.cuda.is_available() else "cpu")
 print(torch.get_default_device())
 torch.set_default_dtype(
     torch.float64
@@ -96,13 +96,26 @@ EXAMPLE_PREDICTOR_VARIABLE_NAMES = [
     #"B205WC002.RA001", # SPEED CHILLED WATER PUMP
 ]  # example predictor variables
 
-from feature_groups import get_cooler_valves
+#TODO:
+#B205WC100.PA72, #VOLUME FEEDING HOT WATER SYSTEM
+
+from feature_groups import get_cooler_valves, get_active_setpoints
 cooler_valves = get_cooler_valves(metadata, enable_rooms=True)#False)
 cooler_valves_ids = cooler_valves['object_id'].unique().tolist()
-EXAMPLE_PREDICTOR_VARIABLE_NAMES += cooler_valves_ids
+#EXAMPLE_PREDICTOR_VARIABLE_NAMES += cooler_valves_ids
+
+#room_sizes = metadata[['room', 'bim_room_area']].dropna().drop_duplicates(subset=['room'])
+#topk_rooms = room_sizes.nlargest(50, 'bim_room_area')['room'].tolist()
+#metadata = metadata[metadata['room'].isin(topk_rooms)].copy()
+active_setpoints = get_active_setpoints(metadata).drop_duplicates(subset=['object_id'])
+setpoints_by_room = active_setpoints.groupby('room')['object_id'].apply(list)
+active_setpoints_ids = active_setpoints['object_id'].unique().tolist()
+print(f"Using {len(active_setpoints_ids)} active setpoints as predictor variables.")
+print(f"Number of rooms with active setpoints: {len(setpoints_by_room)}")
+EXAMPLE_PREDICTOR_VARIABLE_NAMES += active_setpoints_ids
 
 print("Predictor variables:")
-print(EXAMPLE_PREDICTOR_VARIABLE_NAMES)
+#print(EXAMPLE_PREDICTOR_VARIABLE_NAMES)
 print(f"Using {len(EXAMPLE_PREDICTOR_VARIABLE_NAMES)} predictor variables.")
 print('Do you want to proceed? (y/n)')
 proceed = input()
@@ -356,7 +369,17 @@ def simple_feature_dataset(
             for col in EXAMPLE_PREDICTOR_VARIABLE_NAMES + [TARGET_VARIABLE_NAME]
             if col in full_multivariate_timeseries_df.columns
         ]
-    ]
+    ].copy()
+
+    for room, sp_ids in setpoints_by_room.items():
+        sensors_available = list(
+            set(sp_ids).intersection(set(timeseries_df.columns))
+        )
+        room_col = 'SumActiveSetpoint_' + room
+        timeseries_df[room_col] = timeseries_df[sensors_available].sum(axis=1)
+        if not room_col in EXAMPLE_PREDICTOR_VARIABLE_NAMES:
+            EXAMPLE_PREDICTOR_VARIABLE_NAMES.append(room_col)
+
     first_valid_idx = timeseries_df.notna().all(axis=1).idxmax()
     timeseries_df = timeseries_df.loc[first_valid_idx:]
 
@@ -418,6 +441,7 @@ def simple_feature_dataset(
     X = []
     Y = []
 
+    pbar = tqdm(total=(data.shape[0] - input_seq_len - predict_ahead) // stride)
     for i in range(0, data.shape[0] - input_seq_len - predict_ahead, stride):
         selected_features = []
         
@@ -476,6 +500,9 @@ def simple_feature_dataset(
             #        column_names.get_loc(col_name),
             #    ]
             #else:
+            if EXAMPLE_PREDICTOR_VARIABLE_NAMES[j] in active_setpoints_ids:
+                continue # skip raw setpoint values, use only room aggregated ones
+
             example_predictor_variable = normalization_fn(
                 data[
                     i : i + input_seq_len : input_seq_step,
@@ -511,6 +538,9 @@ def simple_feature_dataset(
 
         Y.append(torch.cat([timestamp, target_variable]))
 
+        pbar.update(1)
+    pbar.close()
+
     X = torch.stack(X)
     Y = torch.stack(Y)
 
@@ -540,13 +570,13 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn):
             return torch.cat([timestamp_of_prediction, y_core], dim=1)
 
     class ChannelWiseAIFBOModel(nn.Module):
-        def __init__(self, input_size, hidden_other=128, hidden_cooler=64):
+        def __init__(self, channel_group_ids, input_size, hidden_other=128, hidden_channel_group=64):
             super().__init__()
-            print(f"Input size: {input_size}")# timestamp has already been excluded from input_size
+            print(f"Input size: {input_size}") # timestamp has already been excluded from input_size
             input_seq_len = int(60 / RESAMPLE_FREQ_MIN) * 1  # hours
-            self.cooler_valve_input_size = len(cooler_valves_ids) * input_seq_len
-            print(f"Cooler valve input size: {self.cooler_valve_input_size}")
-            self.other_input_size = input_size - self.cooler_valve_input_size
+            self.channel_group_size = len(channel_group_ids) * input_seq_len
+            print(f"Channel group input size: {self.channel_group_size}")
+            self.other_input_size = input_size - self.channel_group_size
             print(f"Other input size: {self.other_input_size}")
             self.mlp_other = torchvision.ops.MLP(
                 in_channels=self.other_input_size,
@@ -554,12 +584,12 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn):
                 norm_layer=nn.LayerNorm,
             ).to(dtype=torch.get_default_dtype())
             self.mlp_cooler_valves = torchvision.ops.MLP(
-                in_channels=self.cooler_valve_input_size,
-                hidden_channels=[hidden_cooler, hidden_cooler],
+                in_channels=self.channel_group_size,
+                hidden_channels=[hidden_channel_group, hidden_channel_group],
                 norm_layer=nn.LayerNorm,
             ).to(dtype=torch.get_default_dtype())
             self.final_mlp = torchvision.ops.MLP(
-                in_channels=hidden_other + hidden_cooler,
+                in_channels=hidden_other + hidden_channel_group,
                 hidden_channels=[128, 1],
                 norm_layer=nn.LayerNorm,
             ).to(dtype=torch.get_default_dtype())
@@ -567,8 +597,8 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn):
         def forward(self, x):
             timestamp_of_prediction, x_other, x_cooler = (
                 x[:, :1],
-                x[:, 1 : -self.cooler_valve_input_size],# a few datetime features + other predictors
-                x[:, -self.cooler_valve_input_size :],# cooler valve predictors
+                x[:, 1 : -self.channel_group_size],# a few datetime features + other predictors
+                x[:, -self.channel_group_size :],# cooler valve predictors
             )
             y_other = self.mlp_other(x_other)
             y_cooler = self.mlp_cooler_valves(x_cooler)
@@ -583,7 +613,13 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn):
     #model = SimpleAIFBOModel(input_size=input_size)
 
     #originally suply cooler temp and external temp were good predictors - give them more hidden dimensions than cooler valves
-    model = ChannelWiseAIFBOModel(input_size=input_size, hidden_other=128, hidden_cooler=64)#8)#64 was better than 8
+    #model = ChannelWiseAIFBOModel(cooler_valves_ids, input_size, hidden_other=128, hidden_channel_group=64)
+    
+    # active setpoints using all raw sensors
+    #model = ChannelWiseAIFBOModel(active_setpoints_ids, input_size, hidden_other=128, hidden_channel_group=64)
+    # active setpoints using room aggregated ones
+    model = ChannelWiseAIFBOModel(setpoints_by_room.index.tolist(), input_size, hidden_other=128, hidden_channel_group=64)
+    
     optimizer = torch.optim.Adam(model.parameters(), lr=2.5e-4)
 
     for epoch in range(200):

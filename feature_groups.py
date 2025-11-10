@@ -78,3 +78,11 @@ def get_cooler_valves(metadata, enable_rooms=False):
         return cooler_valves
     else:
         return cooler_valves[cooler_valves['room'].isnull()]
+    
+def get_active_setpoints(metadata, k=None):
+    # room information is always available for VT03_2 setpoints
+    active_setpoints = metadata[metadata['channel']=='VT03_2']
+    if k is not None:
+        active_setpoints = active_setpoints.nlargest(k, 'bim_room_area')
+    return active_setpoints
+    
