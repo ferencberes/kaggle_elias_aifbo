@@ -583,7 +583,7 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn):
     #model = SimpleAIFBOModel(input_size=input_size)
 
     #originally suply cooler temp and external temp were good predictors - give them more hidden dimensions than cooler valves
-    model = ChannelWiseAIFBOModel(input_size=input_size, hidden_other=128, hidden_cooler=64)
+    model = ChannelWiseAIFBOModel(input_size=input_size, hidden_other=128, hidden_cooler=64)#8)#64 was better than 8
     optimizer = torch.optim.Adam(model.parameters(), lr=2.5e-4)
 
     for epoch in range(200):
@@ -666,7 +666,7 @@ if __name__ == "__main__":
         generator=torch.Generator(device=torch.get_default_device()),
     )
     vali_loader = DataLoader(vali_dataset, batch_size=64, shuffle=False)
-    test_input_loader = DataLoader(test_input_dataset, batch_size=8, shuffle=False)
+    test_input_loader = DataLoader(test_input_dataset, batch_size=64, shuffle=False)
 
     # Define loss function, model, and perform training:
     loss_fn = nn.MSELoss()
