@@ -16,6 +16,7 @@ Note that all of the components are just starting points, and many aspects can s
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+import pickle
 import csv
 from datetime import datetime
 import glob
@@ -30,8 +31,10 @@ import matplotlib.pyplot as plt
 import torchvision
 from tqdm import tqdm
 
+from typing import List, Optional, Tuple
+
 torch.manual_seed(0)
-torch.set_default_device("cuda:3" if torch.cuda.is_available() else "cpu")
+torch.set_default_device("cuda:1" if torch.cuda.is_available() else "cpu")
 print(torch.get_default_device())
 torch.set_default_dtype(
     torch.float64
@@ -99,20 +102,39 @@ EXAMPLE_PREDICTOR_VARIABLE_NAMES = [
 #TODO:
 #B205WC100.PA72, #VOLUME FEEDING HOT WATER SYSTEM
 
-from feature_groups import get_cooler_valves, get_active_setpoints
-cooler_valves = get_cooler_valves(metadata, enable_rooms=True)#False)
-cooler_valves_ids = cooler_valves['object_id'].unique().tolist()
-#EXAMPLE_PREDICTOR_VARIABLE_NAMES += cooler_valves_ids
+from feature_groups import get_cooler_valves, get_active_setpoints, get_co2_concentrations
+
+use_cooler_valves = True
+use_active_setpoints = False
+use_co2_concentrations = False
+
+if use_cooler_valves:
+    cooler_valves = get_cooler_valves(metadata, enable_rooms=True)
+    cooler_valves_ids = cooler_valves['object_id'].unique().tolist()
+    print(f"Using {len(cooler_valves_ids)} cooler valves as predictor variables.")
+    EXAMPLE_PREDICTOR_VARIABLE_NAMES += cooler_valves_ids
 
 #room_sizes = metadata[['room', 'bim_room_area']].dropna().drop_duplicates(subset=['room'])
 #topk_rooms = room_sizes.nlargest(50, 'bim_room_area')['room'].tolist()
 #metadata = metadata[metadata['room'].isin(topk_rooms)].copy()
-active_setpoints = get_active_setpoints(metadata).drop_duplicates(subset=['object_id'])
-setpoints_by_room = active_setpoints.groupby('room')['object_id'].apply(list)
-active_setpoints_ids = active_setpoints['object_id'].unique().tolist()
-print(f"Using {len(active_setpoints_ids)} active setpoints as predictor variables.")
-print(f"Number of rooms with active setpoints: {len(setpoints_by_room)}")
-EXAMPLE_PREDICTOR_VARIABLE_NAMES += active_setpoints_ids
+
+if use_active_setpoints:
+    active_setpoints = get_active_setpoints(metadata).drop_duplicates(subset=['object_id'])
+    setpoints_by_room = active_setpoints.groupby('room')['object_id'].apply(list)
+    active_setpoints_ids = active_setpoints['object_id'].unique().tolist()
+    print(f"Using {len(active_setpoints_ids)} active setpoints as predictor variables.")
+    print(f"Number of rooms with active setpoints: {len(setpoints_by_room)}")
+    EXAMPLE_PREDICTOR_VARIABLE_NAMES += active_setpoints_ids
+
+if use_co2_concentrations:
+    co2_concentration_sensors = get_co2_concentrations(metadata)
+    co2_concentration_sensors['room'] = co2_concentration_sensors['room'].fillna('NoRoom')
+    #print(co2_concentration_sensors.isnull().mean().sort_values(ascending=False).head(10))
+    co2_concentration_by_room = co2_concentration_sensors.groupby('room')['object_id'].apply(list)
+    co2_concentration_ids = co2_concentration_sensors['object_id'].unique().tolist()
+    print(f"Using {len(co2_concentration_ids)} CO2 concentration sensors as predictor variables.")
+    print(f"Number of rooms with CO2 concentration sensors: {len(co2_concentration_by_room)}")
+    EXAMPLE_PREDICTOR_VARIABLE_NAMES += co2_concentration_ids
 
 print("Predictor variables:")
 #print(EXAMPLE_PREDICTOR_VARIABLE_NAMES)
@@ -369,19 +391,34 @@ def simple_feature_dataset(
             for col in EXAMPLE_PREDICTOR_VARIABLE_NAMES + [TARGET_VARIABLE_NAME]
             if col in full_multivariate_timeseries_df.columns
         ]
-    ].copy()
-
-    for room, sp_ids in setpoints_by_room.items():
-        sensors_available = list(
-            set(sp_ids).intersection(set(timeseries_df.columns))
-        )
-        room_col = 'SumActiveSetpoint_' + room
-        timeseries_df[room_col] = timeseries_df[sensors_available].sum(axis=1)
-        if not room_col in EXAMPLE_PREDICTOR_VARIABLE_NAMES:
-            EXAMPLE_PREDICTOR_VARIABLE_NAMES.append(room_col)
+    ]
 
     first_valid_idx = timeseries_df.notna().all(axis=1).idxmax()
-    timeseries_df = timeseries_df.loc[first_valid_idx:]
+    timeseries_df = timeseries_df.loc[first_valid_idx:].copy()
+
+    if use_active_setpoints:
+        for room, sp_ids in setpoints_by_room.items():
+            sensors_available = list(
+                set(sp_ids).intersection(set(timeseries_df.columns))
+            )
+            if len(sensors_available) == 0:
+                continue
+            room_col = 'SumActiveSetpoint_' + room
+            timeseries_df[room_col] = timeseries_df[sensors_available].sum(axis=1)
+            if not room_col in EXAMPLE_PREDICTOR_VARIABLE_NAMES:
+                EXAMPLE_PREDICTOR_VARIABLE_NAMES.append(room_col)
+
+    if use_co2_concentrations:
+        for room, co2_ids in co2_concentration_by_room.items():
+            sensors_available = list(
+                set(co2_ids).intersection(set(timeseries_df.columns))
+            )
+            if len(sensors_available) == 0:
+                continue
+            room_col = 'AvgCO2Concentration_' + room
+            timeseries_df[room_col] = timeseries_df[sensors_available].mean(axis=1)
+            if not room_col in EXAMPLE_PREDICTOR_VARIABLE_NAMES:
+                EXAMPLE_PREDICTOR_VARIABLE_NAMES.append(room_col)
 
     if add_dummy_y:
         timeseries_df[TARGET_VARIABLE_NAME] = np.nan
@@ -492,16 +529,14 @@ def simple_feature_dataset(
         """
 
         for j in range(len(EXAMPLE_PREDICTOR_VARIABLE_NAMES)):
-            #col_name = EXAMPLE_PREDICTOR_VARIABLE_NAMES[j]
-            #if col_name in cooler_valves_ids:
-            #    # do not use normalization for cooler valves
-            #    example_predictor_variable = data[
-            #        i : i + input_seq_len : input_seq_step,
-            #        column_names.get_loc(col_name),
-            #    ]
-            #else:
-            if EXAMPLE_PREDICTOR_VARIABLE_NAMES[j] in active_setpoints_ids:
-                continue # skip raw setpoint values, use only room aggregated ones
+
+            if use_active_setpoints:
+                if EXAMPLE_PREDICTOR_VARIABLE_NAMES[j] in active_setpoints_ids:
+                    continue # skip raw setpoint values, use only room aggregated ones
+
+            if use_co2_concentrations:
+                if EXAMPLE_PREDICTOR_VARIABLE_NAMES[j] in co2_concentration_ids:
+                    continue # skip raw co2 concentration values, use only room aggregated ones
 
             example_predictor_variable = normalization_fn(
                 data[
@@ -511,23 +546,6 @@ def simple_feature_dataset(
                 EXAMPLE_PREDICTOR_VARIABLE_NAMES[j],
             )
             selected_features.append(example_predictor_variable)
-
-        """
-        example_predictor_variable_0 = normalization_fn(
-            data[
-                i : i + input_seq_len : input_seq_step,
-                column_names.get_loc(EXAMPLE_PREDICTOR_VARIABLE_NAMES[0]),
-            ],
-            EXAMPLE_PREDICTOR_VARIABLE_NAMES[0],
-        )
-        example_predictor_variable_1 = normalization_fn(
-            data[
-                i : i + input_seq_len : input_seq_step,
-                column_names.get_loc(EXAMPLE_PREDICTOR_VARIABLE_NAMES[1]),
-            ],
-            EXAMPLE_PREDICTOR_VARIABLE_NAMES[1],
-        )
-        """
 
         X.append(torch.cat(selected_features))
 
@@ -604,11 +622,68 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn):
             y_cooler = self.mlp_cooler_valves(x_cooler)
             y_core = self.final_mlp(torch.cat([y_other, y_cooler], dim=1))
             return torch.cat([timestamp_of_prediction, y_core], dim=1)
+        
+    class MultiChannelAIFBOModel(nn.Module):
+        def __init__(self, input_size:int, hidden_other:int, hidden_by_channels:List[int], predictors_by_channels:List[list]):
+            super().__init__()
+            assert len(hidden_by_channels) == len(predictors_by_channels), "Length of hidden_by_channels must match length of predictors_by_channels"
+            print(f"Input size: {input_size}") # timestamp has already been excluded from input_size
+            input_seq_len = int(60 / RESAMPLE_FREQ_MIN) * 1  # hours
+            self.channel_group_sizes = [len(ids) * input_seq_len for ids in predictors_by_channels]
+            self.other_input_size = input_size - sum(self.channel_group_sizes)
+            print(f"Other input size: {self.other_input_size}")
+            self.mlp_other = torchvision.ops.MLP(
+                in_channels=self.other_input_size,
+                hidden_channels=[hidden_other, hidden_other],
+                norm_layer=nn.LayerNorm,
+            ).to(dtype=torch.get_default_dtype())
+            self.mlp_by_channels = nn.ModuleList()
+            for channel_size, hidden_size in zip(self.channel_group_sizes, hidden_by_channels):
+                mlp_channel = torchvision.ops.MLP(
+                    in_channels=channel_size,
+                    hidden_channels=[hidden_size, hidden_size],
+                    norm_layer=nn.LayerNorm,
+                ).to(dtype=torch.get_default_dtype())
+                self.mlp_by_channels.append(mlp_channel)
+            self.final_mlp = torchvision.ops.MLP(
+                in_channels=hidden_other + sum(hidden_by_channels),
+                hidden_channels=[128, 1],
+                norm_layer=nn.LayerNorm,
+            ).to(dtype=torch.get_default_dtype())
+
+        def forward(self, x):
+            timestamp_of_prediction = x[:, :1]
+            x_other = x[:, 1 : 1 + self.other_input_size]# a few datetime features + other predictors
+            x_channels = x[:, 1 + self.other_input_size :]# channel group predictors
+            y_other = self.mlp_other(x_other)
+            y_by_channels = []
+            start_idx = 0
+            for mlp_channel, channel_size in zip(self.mlp_by_channels, self.channel_group_sizes):
+                x_channel = x_channels[:, start_idx : start_idx + channel_size]
+                y_channel = mlp_channel(x_channel)
+                y_by_channels.append(y_channel)
+                start_idx += channel_size
+            y_core = self.final_mlp(torch.cat([y_other] + y_by_channels, dim=1))
+            return torch.cat([timestamp_of_prediction, y_core], dim=1)
 
     x, _ = next(iter(train_loader))
     input_size = (
         x.shape[-1] - 1
     )  # Get the input size from the first batch, subtract 1 for the timestamp
+
+    hidden_other = 128
+    predictors_by_channels, hidden_by_channels = [], []
+    if use_cooler_valves:
+        predictors_by_channels.append(cooler_valves_ids)
+        hidden_by_channels.append(64)
+    if use_active_setpoints:
+        predictors_by_channels.append(setpoints_by_room.index.tolist())
+        hidden_by_channels.append(64)
+    if use_co2_concentrations:
+        predictors_by_channels.append(co2_concentration_by_room.index.tolist())
+        hidden_by_channels.append(64)
+
+    model = MultiChannelAIFBOModel(input_size=input_size, hidden_other=hidden_other, hidden_by_channels=hidden_by_channels, predictors_by_channels=predictors_by_channels)
 
     #model = SimpleAIFBOModel(input_size=input_size)
 
@@ -618,7 +693,10 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn):
     # active setpoints using all raw sensors
     #model = ChannelWiseAIFBOModel(active_setpoints_ids, input_size, hidden_other=128, hidden_channel_group=64)
     # active setpoints using room aggregated ones
-    model = ChannelWiseAIFBOModel(setpoints_by_room.index.tolist(), input_size, hidden_other=128, hidden_channel_group=64)
+    #model = ChannelWiseAIFBOModel(setpoints_by_room.index.tolist(), input_size, hidden_other=128, hidden_channel_group=64)
+
+    # co2 concentration using all raw sensors
+    #model = ChannelWiseAIFBOModel(co2_concentration_by_room.index.tolist(), input_size, hidden_other=128, hidden_channel_group=64)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=2.5e-4)
 
@@ -666,26 +744,48 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn):
 
 
 if __name__ == "__main__":
+    reload_prepared_pt_files = False
+    
     # Load raw data and prepare it into multivariate dataframes, and create dir for later outputs:
     os.makedirs(OUTPUTS_DIR, exist_ok=True)
-    full_train_df = simple_load_and_resample_data(
-        TRAIN_DATA_FILE_PATHS,
-        generate_sample_plots=[TARGET_VARIABLE_NAME] + EXAMPLE_PREDICTOR_VARIABLE_NAMES,
-        save_load_df=f"{OUTPUTS_DIR}/preproc_full_train_df.parquet",
-    )
-    test_input_df = simple_load_and_resample_data(
-        TEST_INPUT_DATA_FILE_PATHS,
-        save_load_df=f"{OUTPUTS_DIR}/preproc_test_input_df.parquet",
-    )
-    tzinfo = full_train_df.index.tzinfo
+    prepared_data_dir = f"{OUTPUTS_DIR}/useCoolerValves_{use_cooler_valves}_useActiveSetpoints_{use_active_setpoints}_useCO2Concentrations_{use_co2_concentrations}"
+    os.makedirs(prepared_data_dir, exist_ok=True)
+    full_train_dataset_path = f"{prepared_data_dir}/full_train_dataset.pt"
+    test_input_dataset_path = f"{prepared_data_dir}/test_input_dataset.pt"
+    tzinfo_path = f"{prepared_data_dir}/tzinfo.pkl"
 
-    # Turn it into torch datasets for simple prediction from past to future, with simple features:
-    full_train_dataset, full_train_dataset_info = simple_feature_dataset(
-        full_train_df, add_dummy_y=False, normalize=True
-    )
-    test_input_dataset, _ = simple_feature_dataset(
-        test_input_df, add_dummy_y=True, normalize=full_train_dataset_info
-    )
+    if reload_prepared_pt_files and os.path.exists(full_train_dataset_path) and os.path.exists(test_input_dataset_path):
+        print("Loading prepared dataset files ...")
+        full_train_dataset = torch.load(full_train_dataset_path)
+        test_input_dataset = torch.load(test_input_dataset_path)
+        with open(tzinfo_path, "rb") as f:
+            tzinfo = pickle.load(f)
+    else:
+        full_train_df = simple_load_and_resample_data(
+            TRAIN_DATA_FILE_PATHS,
+            generate_sample_plots=[TARGET_VARIABLE_NAME] + EXAMPLE_PREDICTOR_VARIABLE_NAMES,
+            save_load_df=f"{OUTPUTS_DIR}/preproc_full_train_df.parquet",
+        )
+
+        test_input_df = simple_load_and_resample_data(
+            TEST_INPUT_DATA_FILE_PATHS,
+            save_load_df=f"{OUTPUTS_DIR}/preproc_test_input_df.parquet",
+        )
+    
+        tzinfo = full_train_df.index.tzinfo
+        with open(tzinfo_path, "wb") as f:
+            pickle.dump(tzinfo, f)
+
+        # Turn it into torch datasets for simple prediction from past to future, with simple features:
+        full_train_dataset, full_train_dataset_info = simple_feature_dataset(
+            full_train_df, add_dummy_y=False, normalize=True
+        )
+        torch.save(full_train_dataset, full_train_dataset_path)
+        
+        test_input_dataset, _ = simple_feature_dataset(
+            test_input_df, add_dummy_y=True, normalize=full_train_dataset_info
+        )
+        torch.save(test_input_dataset, test_input_dataset_path)
 
     # Turn it into data loaders for training, validation, and submission (where submission loader differs in that
     # it has no target variable values, i.e. y):

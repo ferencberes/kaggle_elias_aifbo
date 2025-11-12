@@ -85,4 +85,9 @@ def get_active_setpoints(metadata, k=None):
     if k is not None:
         active_setpoints = active_setpoints.nlargest(k, 'bim_room_area')
     return active_setpoints
-    
+
+def get_co2_concentrations(metadata, k=None):
+    co2_sensors = metadata[(metadata['channel']=='AM21') & (metadata['dimension_text'].str.lower()=='ppm')]
+    if k is not None:
+        co2_sensors = co2_sensors.nlargest(k, 'bim_room_area')
+    return co2_sensors
