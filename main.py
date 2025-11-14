@@ -104,9 +104,11 @@ EXAMPLE_PREDICTOR_VARIABLE_NAMES = [
 
 from feature_groups import get_cooler_valves, get_active_setpoints, get_co2_concentrations
 
+rerun_all = False
+
 use_cooler_valves = True
-use_active_setpoints = False
-use_co2_concentrations = False
+use_active_setpoints = True
+use_co2_concentrations = True
 
 if use_cooler_valves:
     cooler_valves = get_cooler_valves(metadata, enable_rooms=True)
@@ -127,7 +129,7 @@ if use_active_setpoints:
     EXAMPLE_PREDICTOR_VARIABLE_NAMES += active_setpoints_ids
 
 if use_co2_concentrations:
-    co2_concentration_sensors = get_co2_concentrations(metadata)
+    co2_concentration_sensors = get_co2_concentrations(metadata).copy()
     co2_concentration_sensors['room'] = co2_concentration_sensors['room'].fillna('NoRoom')
     #print(co2_concentration_sensors.isnull().mean().sort_values(ascending=False).head(10))
     co2_concentration_by_room = co2_concentration_sensors.groupby('room')['object_id'].apply(list)
@@ -675,13 +677,13 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn):
     predictors_by_channels, hidden_by_channels = [], []
     if use_cooler_valves:
         predictors_by_channels.append(cooler_valves_ids)
-        hidden_by_channels.append(64)
+        hidden_by_channels.append(32)
     if use_active_setpoints:
         predictors_by_channels.append(setpoints_by_room.index.tolist())
-        hidden_by_channels.append(64)
+        hidden_by_channels.append(32)
     if use_co2_concentrations:
         predictors_by_channels.append(co2_concentration_by_room.index.tolist())
-        hidden_by_channels.append(64)
+        hidden_by_channels.append(32)
 
     model = MultiChannelAIFBOModel(input_size=input_size, hidden_other=hidden_other, hidden_by_channels=hidden_by_channels, predictors_by_channels=predictors_by_channels)
 
@@ -744,7 +746,7 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn):
 
 
 if __name__ == "__main__":
-    reload_prepared_pt_files = False
+    reload_prepared_pt_files = (not rerun_all)
     
     # Load raw data and prepare it into multivariate dataframes, and create dir for later outputs:
     os.makedirs(OUTPUTS_DIR, exist_ok=True)
