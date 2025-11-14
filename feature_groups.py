@@ -91,3 +91,13 @@ def get_co2_concentrations(metadata, k=None):
     if k is not None:
         co2_sensors = co2_sensors.nlargest(k, 'bim_room_area')
     return co2_sensors
+
+def get_humidity_sensors(metadata, k=None):
+    humidity_sensors = metadata[metadata['channel'].isin(['AM45', 'AM45_1', 'AM51'])]
+    excluded_ids = [
+        'B106WS01.AM51', #light intensity sensor
+    ]
+    humidity_sensors = humidity_sensors[humidity_sensors['object_id'].isin(excluded_ids) == False]
+    if k is not None:
+        humidity_sensors = humidity_sensors.nlargest(k, 'bim_room_area')
+    return humidity_sensors

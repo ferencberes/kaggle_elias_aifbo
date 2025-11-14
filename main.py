@@ -31,7 +31,7 @@ import matplotlib.pyplot as plt
 import torchvision
 from tqdm import tqdm
 
-from typing import List, Optional, Tuple
+from typing import List
 
 torch.manual_seed(0)
 torch.set_default_device("cuda:1" if torch.cuda.is_available() else "cpu")
@@ -102,13 +102,14 @@ EXAMPLE_PREDICTOR_VARIABLE_NAMES = [
 #TODO:
 #B205WC100.PA72, #VOLUME FEEDING HOT WATER SYSTEM
 
-from feature_groups import get_cooler_valves, get_active_setpoints, get_co2_concentrations
+from feature_groups import get_cooler_valves, get_active_setpoints, get_co2_concentrations, get_humidity_sensors
 
 rerun_all = False
 
 use_cooler_valves = True
 use_active_setpoints = True
 use_co2_concentrations = True
+use_humidity_sensors = True
 
 if use_cooler_valves:
     cooler_valves = get_cooler_valves(metadata, enable_rooms=True)
@@ -137,6 +138,16 @@ if use_co2_concentrations:
     print(f"Using {len(co2_concentration_ids)} CO2 concentration sensors as predictor variables.")
     print(f"Number of rooms with CO2 concentration sensors: {len(co2_concentration_by_room)}")
     EXAMPLE_PREDICTOR_VARIABLE_NAMES += co2_concentration_ids
+
+if use_humidity_sensors:
+    humidity_sensors = get_humidity_sensors(metadata)
+    #TODO: there is high missing room rate (25 room out of almost 100 sensors)
+    humidity_sensors['room'] = humidity_sensors['room'].fillna('NoRoom')
+    humidity_by_room = humidity_sensors.groupby('room')['object_id'].apply(list)
+    humidity_sensor_ids = humidity_sensors['object_id'].unique().tolist()
+    print(f"Using {len(humidity_sensor_ids)} humidity sensors as predictor variables.")
+    print(f"Number of rooms with humidity sensors: {len(humidity_by_room)}")
+    EXAMPLE_PREDICTOR_VARIABLE_NAMES += humidity_sensor_ids
 
 print("Predictor variables:")
 #print(EXAMPLE_PREDICTOR_VARIABLE_NAMES)
@@ -422,6 +433,18 @@ def simple_feature_dataset(
             if not room_col in EXAMPLE_PREDICTOR_VARIABLE_NAMES:
                 EXAMPLE_PREDICTOR_VARIABLE_NAMES.append(room_col)
 
+    if use_humidity_sensors:
+        for room, hum_ids in humidity_by_room.items():
+            sensors_available = list(
+                set(hum_ids).intersection(set(timeseries_df.columns))
+            )
+            if len(sensors_available) == 0:
+                continue
+            room_col = 'AvgHumidity_' + room
+            timeseries_df[room_col] = timeseries_df[sensors_available].mean(axis=1)
+            if not room_col in EXAMPLE_PREDICTOR_VARIABLE_NAMES:
+                EXAMPLE_PREDICTOR_VARIABLE_NAMES.append(room_col)
+
     if add_dummy_y:
         timeseries_df[TARGET_VARIABLE_NAME] = np.nan
 
@@ -539,6 +562,10 @@ def simple_feature_dataset(
             if use_co2_concentrations:
                 if EXAMPLE_PREDICTOR_VARIABLE_NAMES[j] in co2_concentration_ids:
                     continue # skip raw co2 concentration values, use only room aggregated ones
+
+            if use_humidity_sensors:
+                if EXAMPLE_PREDICTOR_VARIABLE_NAMES[j] in humidity_sensor_ids:
+                    continue # skip raw humidity sensor values, use only room aggregated ones
 
             example_predictor_variable = normalization_fn(
                 data[
@@ -677,13 +704,16 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn):
     predictors_by_channels, hidden_by_channels = [], []
     if use_cooler_valves:
         predictors_by_channels.append(cooler_valves_ids)
-        hidden_by_channels.append(32)
+        hidden_by_channels.append(64)
     if use_active_setpoints:
         predictors_by_channels.append(setpoints_by_room.index.tolist())
-        hidden_by_channels.append(32)
+        hidden_by_channels.append(64)
     if use_co2_concentrations:
         predictors_by_channels.append(co2_concentration_by_room.index.tolist())
-        hidden_by_channels.append(32)
+        hidden_by_channels.append(64)
+    if use_humidity_sensors:
+        predictors_by_channels.append(humidity_by_room.index.tolist())
+        hidden_by_channels.append(64)
 
     model = MultiChannelAIFBOModel(input_size=input_size, hidden_other=hidden_other, hidden_by_channels=hidden_by_channels, predictors_by_channels=predictors_by_channels)
 
@@ -750,7 +780,7 @@ if __name__ == "__main__":
     
     # Load raw data and prepare it into multivariate dataframes, and create dir for later outputs:
     os.makedirs(OUTPUTS_DIR, exist_ok=True)
-    prepared_data_dir = f"{OUTPUTS_DIR}/useCoolerValves_{use_cooler_valves}_useActiveSetpoints_{use_active_setpoints}_useCO2Concentrations_{use_co2_concentrations}"
+    prepared_data_dir = f"{OUTPUTS_DIR}/useCoolerValves_{use_cooler_valves}_useActiveSetpoints_{use_active_setpoints}_useCO2Concentrations_{use_co2_concentrations}_useHumiditySensors_{use_humidity_sensors}"
     os.makedirs(prepared_data_dir, exist_ok=True)
     full_train_dataset_path = f"{prepared_data_dir}/full_train_dataset.pt"
     test_input_dataset_path = f"{prepared_data_dir}/test_input_dataset.pt"
