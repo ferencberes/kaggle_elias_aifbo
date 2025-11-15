@@ -153,6 +153,10 @@ if use_humidity_sensors:
 if use_controller_building_sensors:
     controller_building_sensors = get_controller_building_sensors(metadata, building_id='B205')
     controller_building_sensor_ids = controller_building_sensors['object_id'].unique().tolist()
+    #removing already used predictor variables
+    controller_building_sensor_ids = list(set(controller_building_sensor_ids) - set(EXAMPLE_PREDICTOR_VARIABLE_NAMES))
+    if TARGET_VARIABLE_NAME in controller_building_sensor_ids:
+        controller_building_sensor_ids.remove(TARGET_VARIABLE_NAME)
     print(f"Using {len(controller_building_sensor_ids)} controller building B205 sensors as predictor variables.")
     EXAMPLE_PREDICTOR_VARIABLE_NAMES += controller_building_sensor_ids
 
@@ -482,6 +486,8 @@ def simple_feature_dataset(
     )
 
     column_names = timeseries_df.columns
+
+    #print(column_names.value_counts())
 
     if normalize:
         if normalize == True:

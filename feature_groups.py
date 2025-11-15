@@ -79,9 +79,10 @@ def get_active_setpoints(metadata, k=None):
     return active_setpoints
 
 def get_co2_concentrations(metadata, k=None):
-    #co2_sensors = metadata[(metadata['channel']=='AM21') & (metadata['dimension_text'].str.lower()=='ppm')]
+    co2_sensors = metadata[(metadata['channel']=='AM21') & (metadata['dimension_text'].str.lower()=='ppm')]
     #sometimes CO2 concentration has AM22 channels as well.. so I have more sensors but no extra room attributed to this change
-    co2_sensors = metadata[(metadata['channel'].isin(['AM21', 'AM22'])) & (metadata['dimension_text'].str.lower()=='ppm')]
+    #co2_sensors = metadata[(metadata['channel'].isin(['AM21', 'AM22'])) & (metadata['dimension_text'].str.lower()=='ppm')]
+    # it made results worse!!!
     if k is not None:
         co2_sensors = co2_sensors.nlargest(k, 'bim_room_area')
     return co2_sensors
@@ -96,7 +97,7 @@ def get_humidity_sensors(metadata, k=None):
         humidity_sensors = humidity_sensors.nlargest(k, 'bim_room_area')
     return humidity_sensors
 
-def get_controller_building_sensors(metadata, building_id='B205', excluded_channels=['AC21', 'VT03_2', 'AM21', 'AM22', 'AM45', 'AM45_1', 'AM51']):
+def get_controller_building_sensors(metadata, building_id='B205', excluded_channels=['AC21', 'VT03_2', 'AM21', 'AM45', 'AM45_1', 'AM51']):
     building_sensors = metadata[metadata['object_id'].str.startswith(building_id)] 
     if excluded_channels:
         building_sensors = building_sensors[~building_sensors['channel'].isin(excluded_channels)]
