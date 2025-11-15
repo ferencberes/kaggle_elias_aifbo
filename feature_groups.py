@@ -11,14 +11,6 @@ external_weather_measurements = [
     'B106WS01.AM57',  # wind speed
 ]
 
-# these status step ventillation variables are very scarce 
-#B201FC063_1.VS01_1
-#B201FC268_2.VS01_1
-#B201FC368_1.VS01_1
-#B201FC112_1.VS01_1
-#B201FC475_1.VS01_1
-#B201FC223_1.VS01_1
-
 import pandas as pd
 
 def aggregate_sensor_values(selected_sensor_metadata, timeseries_df, key_col, id_col='object_id', value_agg_func='mean', weight_col=None, weight_agg_func='max'):
@@ -87,7 +79,9 @@ def get_active_setpoints(metadata, k=None):
     return active_setpoints
 
 def get_co2_concentrations(metadata, k=None):
-    co2_sensors = metadata[(metadata['channel']=='AM21') & (metadata['dimension_text'].str.lower()=='ppm')]
+    #co2_sensors = metadata[(metadata['channel']=='AM21') & (metadata['dimension_text'].str.lower()=='ppm')]
+    #sometimes CO2 concentration has AM22 channels as well.. so I have more sensors but no extra room attributed to this change
+    co2_sensors = metadata[(metadata['channel'].isin(['AM21', 'AM22'])) & (metadata['dimension_text'].str.lower()=='ppm')]
     if k is not None:
         co2_sensors = co2_sensors.nlargest(k, 'bim_room_area')
     return co2_sensors
@@ -101,3 +95,10 @@ def get_humidity_sensors(metadata, k=None):
     if k is not None:
         humidity_sensors = humidity_sensors.nlargest(k, 'bim_room_area')
     return humidity_sensors
+
+def get_controller_building_sensors(metadata, building_id='B205', excluded_channels=['AC21', 'VT03_2', 'AM21', 'AM22', 'AM45', 'AM45_1', 'AM51']):
+    building_sensors = metadata[metadata['object_id'].str.startswith(building_id)] 
+    if excluded_channels:
+        building_sensors = building_sensors[~building_sensors['channel'].isin(excluded_channels)]
+    return building_sensors
+    
