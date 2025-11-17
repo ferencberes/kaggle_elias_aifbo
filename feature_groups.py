@@ -102,4 +102,10 @@ def get_controller_building_sensors(metadata, building_id='B205', excluded_chann
     if excluded_channels:
         building_sensors = building_sensors[~building_sensors['channel'].isin(excluded_channels)]
     return building_sensors
+
+def get_room_temperatures(metadata, class_id='FC', k=None):
+    fancoil_temps = metadata[(metadata['object_id'].str.startswith('B201'+class_id)) & (metadata['description'].str.upper().str.contains('ROOM TEMPERATURE')) & (metadata['channel']=='AM01')]
+    if k is not None:
+        fancoil_temps = fancoil_temps.nlargest(k, 'bim_room_area')
+    return fancoil_temps
     

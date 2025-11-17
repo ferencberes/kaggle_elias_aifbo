@@ -102,11 +102,12 @@ from feature_groups import get_cooler_valves, get_active_setpoints, get_co2_conc
 
 rerun_all = True
 
-use_cooler_valves = False#True
-use_active_setpoints = False#True
+MAINTAIN_BEST_MODEL = False#True
+use_cooler_valves = True
+use_active_setpoints = True
 use_co2_concentrations = False#True
 use_humidity_sensors = False#True
-use_controller_building_sensors = False
+use_controller_building_sensors = True
 
 if use_cooler_valves:
     cooler_valves = get_cooler_valves(metadata, enable_rooms=True)
@@ -645,17 +646,6 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn, maintain_best_mod
             timestamp_of_prediction, x_core = x[:, :1], x[:, 1:]
             y_core = self.mlp(x_core)
             return torch.cat([timestamp_of_prediction, y_core], dim=1)
-
-        def forward(self, x):
-            timestamp_of_prediction, x_other, x_cooler = (
-                x[:, :1],
-                x[:, 1 : -self.channel_group_size],# a few datetime features + other predictors
-                x[:, -self.channel_group_size :],# cooler valve predictors
-            )
-            y_other = self.mlp_other(x_other)
-            y_cooler = self.mlp_cooler_valves(x_cooler)
-            y_core = self.final_mlp(torch.cat([y_other, y_cooler], dim=1))
-            return torch.cat([timestamp_of_prediction, y_core], dim=1)
         
     class MultiChannelAIFBOModel(nn.Module):
         def __init__(self, input_size:int, hidden_other:int, hidden_by_channels:List[int], predictors_by_channels:List[list]):
@@ -852,7 +842,7 @@ if __name__ == "__main__":
 
     # Define loss function, model, and perform training:
     loss_fn = nn.MSELoss()
-    model = simple_model_and_train(train_loader, vali_loader, loss_fn, maintain_best_model=True)
+    model = simple_model_and_train(train_loader, vali_loader, loss_fn, maintain_best_model=MAINTAIN_BEST_MODEL)
 
     # Evaluate model on train, validation, and test data, create plots, and create final prediction submission
     # dataframe (with datetime annotation), and save it as submission file CSV:
