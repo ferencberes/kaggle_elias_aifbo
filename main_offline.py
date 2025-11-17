@@ -98,16 +98,18 @@ EXAMPLE_PREDICTOR_VARIABLE_NAMES = [
     #TODO
 ]  # example predictor variables
 
-from feature_groups import get_cooler_valves, get_active_setpoints, get_co2_concentrations, get_humidity_sensors, get_controller_building_sensors
+from feature_groups import get_cooler_valves, get_active_setpoints, get_co2_concentrations, get_humidity_sensors, get_controller_building_sensors, get_room_temperatures
 
-rerun_all = True
+rerun_all = False
 
-MAINTAIN_BEST_MODEL = False#True
 use_cooler_valves = True
-use_active_setpoints = True
-use_co2_concentrations = False#True
-use_humidity_sensors = False#True
-use_controller_building_sensors = True
+use_active_setpoints = False
+use_fc_room_temps = True
+use_rc_room_temps = False#True
+
+use_co2_concentrations = False
+use_humidity_sensors = False
+use_controller_building_sensors = False
 
 if use_cooler_valves:
     cooler_valves = get_cooler_valves(metadata, enable_rooms=True)
@@ -127,6 +129,22 @@ if use_active_setpoints:
     print(f"Number of rooms with active setpoints: {len(setpoints_by_room)}")
     EXAMPLE_PREDICTOR_VARIABLE_NAMES += active_setpoints_ids
 
+if use_fc_room_temps:
+    fc_room_temps = get_room_temperatures(metadata, class_id='FC')
+    fc_room_temp_ids = fc_room_temps['object_id'].unique().tolist()
+    fc_temp_by_room = fc_room_temps.groupby('room')['object_id'].apply(list)
+    print(f"Using {len(fc_room_temp_ids)} FC room temperature sensors as predictor variables.")
+    print(f"Number of rooms with FC room temperature sensors: {len(fc_temp_by_room)}")
+    EXAMPLE_PREDICTOR_VARIABLE_NAMES += fc_room_temp_ids
+
+if use_rc_room_temps:
+    rc_room_temps = get_room_temperatures(metadata, class_id='RC')
+    rc_room_temp_ids = rc_room_temps['object_id'].unique().tolist()
+    rc_temp_by_room = rc_room_temps.groupby('room')['object_id'].apply(list)
+    print(f"Using {len(rc_room_temp_ids)} RC room temperature sensors as predictor variables.")
+    print(f"Number of rooms with RC room temperature sensors: {len(rc_temp_by_room)}")
+    EXAMPLE_PREDICTOR_VARIABLE_NAMES += rc_room_temp_ids
+
 if use_co2_concentrations:
     co2_concentration_sensors = get_co2_concentrations(metadata).copy()
     co2_concentration_sensors['room'] = co2_concentration_sensors['room'].fillna('NoRoom')
@@ -139,6 +157,7 @@ if use_co2_concentrations:
 
 if use_humidity_sensors:
     humidity_sensors = get_humidity_sensors(metadata)
+    #TODO: there is high missing room rate (25 room out of almost 100 sensors)
     #humidity_sensors['room'] = humidity_sensors['room'].fillna('NoRoom')
     #humidity_by_room = humidity_sensors.groupby('room')['object_id'].apply(list)
     humidity_sensor_ids = humidity_sensors['object_id'].unique().tolist()
@@ -439,6 +458,30 @@ def simple_feature_dataset(
             if not room_col in EXAMPLE_PREDICTOR_VARIABLE_NAMES:
                 EXAMPLE_PREDICTOR_VARIABLE_NAMES.append(room_col)
 
+    if use_fc_room_temps:
+        for room, temp_ids in fc_temp_by_room.items():
+            sensors_available = list(
+                set(temp_ids).intersection(set(timeseries_df.columns))
+            )
+            if len(sensors_available) == 0:
+                continue
+            room_col = 'AvgFCRoomTemp_' + room
+            timeseries_df[room_col] = timeseries_df[sensors_available].mean(axis=1)
+            if not room_col in EXAMPLE_PREDICTOR_VARIABLE_NAMES:
+                EXAMPLE_PREDICTOR_VARIABLE_NAMES.append(room_col)
+
+    if use_rc_room_temps:
+        for room, temp_ids in rc_temp_by_room.items():
+            sensors_available = list(
+                set(temp_ids).intersection(set(timeseries_df.columns))
+            )
+            if len(sensors_available) == 0:
+                continue
+            room_col = 'AvgRCRoomTemp_' + room
+            timeseries_df[room_col] = timeseries_df[sensors_available].mean(axis=1)
+            if not room_col in EXAMPLE_PREDICTOR_VARIABLE_NAMES:
+                EXAMPLE_PREDICTOR_VARIABLE_NAMES.append(room_col)
+
     if use_co2_concentrations:
         for room, co2_ids in co2_concentration_by_room.items():
             sensors_available = list(
@@ -582,6 +625,14 @@ def simple_feature_dataset(
                 if col_name in active_setpoints_ids:
                     continue # skip raw setpoint values, use only room aggregated ones
 
+            if use_fc_room_temps:
+                if col_name in fc_room_temp_ids:
+                    continue # skip raw fc room temp sensor values, use only room aggregated ones
+
+            if use_rc_room_temps:
+                if col_name in rc_room_temp_ids:
+                    continue # skip raw rc room temp sensor values, use only room aggregated ones
+
             if use_co2_concentrations:
                 if col_name in co2_concentration_ids:
                     continue # skip raw co2 concentration values, use only room aggregated ones
@@ -704,6 +755,12 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn, maintain_best_mod
         if use_active_setpoints:
             predictors_by_channels.append(setpoints_by_room.index.tolist())
             hidden_by_channels.append(64)
+        if use_fc_room_temps:
+            predictors_by_channels.append(fc_temp_by_room.index.tolist())
+            hidden_by_channels.append(64)
+        if use_rc_room_temps:
+            predictors_by_channels.append(rc_temp_by_room.index.tolist())
+            hidden_by_channels.append(64)
         if use_co2_concentrations:
             predictors_by_channels.append(co2_concentration_by_room.index.tolist())
             hidden_by_channels.append(64)
@@ -777,7 +834,7 @@ if __name__ == "__main__":
     # Load raw data and prepare it into multivariate dataframes, and create dir for later outputs:
     os.makedirs(OUTPUTS_DIR, exist_ok=True)
     # name was shortened after C02 concentration update (AM22 channel included)
-    prepared_data_dir = f"{OUTPUTS_DIR}/useCoolerV_{use_cooler_valves}_useActiveSp_{use_active_setpoints}_useCO2_{use_co2_concentrations}_useHumidity_{use_humidity_sensors}_useCtrlBldg_{use_controller_building_sensors}"
+    prepared_data_dir = f"{OUTPUTS_DIR}/useCoolerV_{use_cooler_valves}_useActiveSp_{use_active_setpoints}_useCO2_{use_co2_concentrations}_useHumidity_{use_humidity_sensors}_useCtrlBldg_{use_controller_building_sensors}_useFCRoomT_{use_fc_room_temps}_useRCRoomT_{use_rc_room_temps}"
     os.makedirs(prepared_data_dir, exist_ok=True)
     full_train_dataset_path = f"{prepared_data_dir}/full_train_dataset.pt"
     test_input_dataset_path = f"{prepared_data_dir}/test_input_dataset.pt"

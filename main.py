@@ -108,8 +108,8 @@ rerun_all = False
 
 use_cooler_valves = True
 use_active_setpoints = False
-use_fc_room_temps = True
-use_rc_room_temps = False
+use_fc_room_temps = False#True
+use_rc_room_temps = True
 
 use_co2_concentrations = False
 use_humidity_sensors = False
