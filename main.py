@@ -109,8 +109,8 @@ rerun_all = False
 use_cooler_valves = True
 use_active_setpoints = True
 use_co2_concentrations = True
-use_humidity_sensors = False
-use_controller_building_sensors = True
+use_humidity_sensors = True
+use_controller_building_sensors = False
 
 if use_cooler_valves:
     cooler_valves = get_cooler_valves(metadata, enable_rooms=True)
@@ -730,7 +730,7 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn):
     if use_humidity_sensors:
         #predictors_by_channels.append(humidity_by_room.index.tolist())
         predictors_by_channels.append(humidity_sensor_ids)
-        hidden_by_channels.append(64)
+        hidden_by_channels.append(32)#64)
     if use_controller_building_sensors:
         predictors_by_channels.append(controller_building_sensor_ids)
         hidden_by_channels.append(64)
