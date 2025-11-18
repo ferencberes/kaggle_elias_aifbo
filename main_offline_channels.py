@@ -34,13 +34,14 @@ from tqdm import tqdm
 from typing import List
 
 torch.manual_seed(0)
+#torch.set_default_device("cuda:3" if torch.cuda.is_available() else "cpu")
 torch.set_default_device("cuda:2" if torch.cuda.is_available() else "cpu")
 print(torch.get_default_device())
 torch.set_default_dtype(
     torch.float64
 )  # with lower than float64 precision, the eventual timestamps may be off
 
-YEAR=2024
+YEAR=2025
 DATA_DIR = "data"
 OUTPUTS_DIR = f"outputs_offline_channelexp_{YEAR}"
 TRAIN_DATA_FILE_PATHS = list(
@@ -642,7 +643,7 @@ def run_channel_experiment(extra_channel_info=None, interactive=True):
     use_humidity_sensors = False
     use_controller_building_sensors = False
 
-    EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS, MODEL_CHANNEL_GROUPS = prepare_predictor_variables(
+    EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS, MODEL_CHANNEL_GROUPS, extra_ids_count = prepare_predictor_variables(
         data_dir=f'{DATA_DIR}/kaggle_dl',
         TARGET_VARIABLE_NAME=TARGET_VARIABLE_NAME,
         interactive=interactive,
@@ -655,6 +656,8 @@ def run_channel_experiment(extra_channel_info=None, interactive=True):
         use_rc_room_temps=use_rc_room_temps,
         extra_channel_info=extra_channel_info
     )
+    if extra_ids_count == 0:
+        return
 
     # name was shortened after C02 concentration update (AM22 channel included)
     prepared_data_dir = f"{OUTPUTS_DIR}/useCoolerV_{use_cooler_valves}_useActiveSp_{use_active_setpoints}_useCO2_{use_co2_concentrations}_useHumidity_{use_humidity_sensors}_useCtrlBldg_{use_controller_building_sensors}_useFCRoomT_{use_fc_room_temps}_useRCRoomT_{use_rc_room_temps}"
@@ -794,9 +797,13 @@ if __name__ == "__main__":
     ]
     excluded_channels += ['AM45', 'AM45_1', 'AM51']#humidity sensors
     channel_info_df = channel_info_df[~channel_info_df['channel'].isin(excluded_channels)]
+    selected_channels = ['AM71', 'AM66', 'AM31', 'RA31','AM71']
+    #elected_channels = ['RA21', 'AC61', 'AM32', 'VQ21','AM02']
     print(channel_info_df.head())
     for _, row in channel_info_df.iterrows():
         channel_id = row['channel']
+        if not channel_id in selected_channels:
+            continue
         short_desc = row['most_popular_short_description'].split(' (')[0]
         missing_room_ratio = row['missing_room_ratio']
         extra_channel_info = (channel_id, short_desc, missing_room_ratio)

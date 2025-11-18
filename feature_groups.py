@@ -209,6 +209,7 @@ def prepare_predictor_variables(data_dir, TARGET_VARIABLE_NAME, interactive=True
         EXAMPLE_PREDICTOR_VARIABLE_NAMES += controller_building_sensor_ids
         MODEL_CHANNEL_GROUPS.append(('controller building B205 sensors', controller_building_sensor_ids))
 
+    extra_ids_count = 0
     if extra_channel_info:
         channel_id, description_pattern, missing_room_ratio = extra_channel_info
         extra_sensors = get_channel_sensors_with_description(metadata, channel_id, description_pattern)
@@ -223,6 +224,8 @@ def prepare_predictor_variables(data_dir, TARGET_VARIABLE_NAME, interactive=True
             MODEL_CHANNEL_GROUPS.append((f'extra sensors {channel_id} {description_pattern}', extra_by_rooms.index.tolist()))
         else:
             MODEL_CHANNEL_GROUPS.append((f'extra sensors {channel_id} {description_pattern}', extra_ids))
+        extra_ids_count = len(extra_ids)
+
 
     print("Predictor variables:")
     #print(EXAMPLE_PREDICTOR_VARIABLE_NAMES)
@@ -234,5 +237,5 @@ def prepare_predictor_variables(data_dir, TARGET_VARIABLE_NAME, interactive=True
             print("Exiting.")
             exit()
 
-    return EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS, MODEL_CHANNEL_GROUPS
+    return EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS, MODEL_CHANNEL_GROUPS, extra_ids_count
     
