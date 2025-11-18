@@ -41,7 +41,7 @@ torch.set_default_dtype(
     torch.float64
 )  # with lower than float64 precision, the eventual timestamps may be off
 
-YEAR=2025
+YEAR=2024
 DATA_DIR = "data"
 OUTPUTS_DIR = f"outputs_offline_channelexp_{YEAR}"
 TRAIN_DATA_FILE_PATHS = list(
@@ -624,6 +624,14 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn, model_channel_gro
             f"Train Loss Epoch: {avg_train_loss_epoch:.5f}. "
             f"Vali Loss: {avg_vali_loss:.5f}"
         )
+    
+    model_report['performance'] = {
+        'epochs_trained': epoch,
+        'train_loss': avg_train_loss_running,
+        'train_loss_epoch': avg_train_loss_epoch,
+        'vali_loss': best_vali_loss
+    }
+
     if maintain_best_model:
         model.load_state_dict(best_model_state_dict)
     return model, model_report
@@ -637,7 +645,7 @@ def run_channel_experiment(extra_channel_info=None, interactive=True):
 
     use_cooler_valves = True
     use_active_setpoints = False
-    use_fc_room_temps = False
+    use_fc_room_temps = True
     use_rc_room_temps = False
     use_co2_concentrations = False
     use_humidity_sensors = False
@@ -797,8 +805,9 @@ if __name__ == "__main__":
     ]
     excluded_channels += ['AM45', 'AM45_1', 'AM51']#humidity sensors
     channel_info_df = channel_info_df[~channel_info_df['channel'].isin(excluded_channels)]
-    selected_channels = ['AM71', 'AM66', 'AM31', 'RA31','AM71']
-    #elected_channels = ['RA21', 'AC61', 'AM32', 'VQ21','AM02']
+    #selected_channels = ['AM71', 'AM66', 'AM31', 'RA31','AM71']
+    #selected_channels = ['RA21', 'AC61', 'AM32', 'VQ21','AM02']
+    selected_channels = ['AM11', 'AM22', 'AC61']
     print(channel_info_df.head())
     for _, row in channel_info_df.iterrows():
         channel_id = row['channel']

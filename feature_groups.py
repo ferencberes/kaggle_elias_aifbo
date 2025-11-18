@@ -81,9 +81,9 @@ def get_active_setpoints(metadata, k=None):
 
 def get_co2_concentrations(metadata, k=None):
     co2_sensors = metadata[(metadata['channel']=='AM21') & (metadata['dimension_text'].str.lower()=='ppm')]
-    #sometimes CO2 concentration has AM22 channels as well.. so I have more sensors but no extra room attributed to this change
+    #sometimes CO2 concentration has AM22 channels and much more (AM23, AM24 etc. !!!) as well.. so I have more sensors but no extra room attributed to this change
     #co2_sensors = metadata[(metadata['channel'].isin(['AM21', 'AM22'])) & (metadata['dimension_text'].str.lower()=='ppm')]
-    # it made results worse!!!
+    # it made results worse!!! when using AM21 and AM22
     if k is not None:
         co2_sensors = co2_sensors.nlargest(k, 'bim_room_area')
     return co2_sensors
