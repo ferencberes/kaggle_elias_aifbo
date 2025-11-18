@@ -188,7 +188,6 @@ if proceed.lower() != 'y':
     print("Exiting.")
     exit()
 
-SUBMISSION_FILE_PATH = f"{OUTPUTS_DIR}/submission_file.csv"
 SUBMISSION_FILE_TARGET_VARIABLE_COLUMN_NAME = "TARGET_VARIABLE"
 SUBMISSION_FILE_DATETIME_FORMAT = "%Y-%m-%d_%H:%M:%S"
 
@@ -917,6 +916,7 @@ if __name__ == "__main__":
     test_prediction_df_for_csv.index.name = "ID"
     
     # write the submission file that can then be uploaded to the competition page:
+    SUBMISSION_FILE_PATH = f"{prepared_data_dir}/submission_file.csv"
     test_prediction_df_for_csv.to_csv(
         SUBMISSION_FILE_PATH,
         index=True,

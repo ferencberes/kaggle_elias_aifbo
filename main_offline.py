@@ -88,6 +88,8 @@ TEST_INPUT_DATA_FILE_PATHS = list(
         ),
     )
 )
+
+MAINTAIN_BEST_MODEL = False  # whether to maintain and return the best model during training
 RESAMPLE_FREQ_MIN = 10  # the frequency in minutes to resample the raw irregularly sampled timeseries to, using ffill
 EPS = 1e-6
 TARGET_VARIABLE_NAME = "B205WC000.AM02"  # the target variable to be predicted
@@ -100,7 +102,7 @@ EXAMPLE_PREDICTOR_VARIABLE_NAMES = [
 
 from feature_groups import get_cooler_valves, get_active_setpoints, get_co2_concentrations, get_humidity_sensors, get_controller_building_sensors, get_room_temperatures
 
-rerun_all = False
+rerun_all = True
 
 use_cooler_valves = True
 use_active_setpoints = False
@@ -246,6 +248,7 @@ def simple_load_and_resample_data(
             regular_dataframe_per_sensor.values(), join="outer", axis=1
         ).ffill()  # forward fill again, due to different ends of concatenants otherwise leading to NaNs
 
+    """#too many sensors are used to make a plot!
     if generate_sample_plots:
         n_plots = len(generate_sample_plots)
         fig, axs = plt.subplots(
@@ -261,6 +264,7 @@ def simple_load_and_resample_data(
             axs[i].legend(fontsize="small")
         plt.savefig(f"{OUTPUTS_DIR}/input_data_sample_timeseries_plot.png")
         plt.close(fig)
+    """
 
     if save_load_df and save:
         multivariate_timeseries_df.to_parquet(save_load_df)
