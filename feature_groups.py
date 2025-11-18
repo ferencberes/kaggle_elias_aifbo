@@ -12,6 +12,7 @@ external_weather_measurements = [
 ]
 
 import pandas as pd
+import os
 
 def aggregate_sensor_values(selected_sensor_metadata, timeseries_df, key_col, id_col='object_id', value_agg_func='mean', weight_col=None, weight_agg_func='max'):
     sensors_by_key = selected_sensor_metadata.groupby(key_col)[id_col].apply(list).to_dict()
@@ -108,4 +109,109 @@ def get_room_temperatures(metadata, class_id='FC', k=None):
     if k is not None:
         fancoil_temps = fancoil_temps.nlargest(k, 'bim_room_area')
     return fancoil_temps
+
+def prepare_predictor_variables(data_dir, TARGET_VARIABLE_NAME, interactive=True, use_cooler_valves=True, use_active_setpoints=False, use_fc_room_temps=False, use_rc_room_temps=False, use_co2_concentrations=False, use_humidity_sensors=False, use_controller_building_sensors=False):
+    
+    metadata = pd.read_parquet(os.path.join(data_dir, "metadata.parquet"))
+    feature_information = pd.read_csv('test_set_feature_information.csv', index_col=0)
+    potential_features = feature_information[
+        (feature_information['missing_ratio'] < 0.2) &
+        (feature_information['nunique_count'] > 2)
+    ].copy()
+    potential_features = potential_features.index.tolist()
+    # keep only features that are available during the test set period
+    metadata = metadata[metadata['object_id'].isin(potential_features)].copy()
+
+    EXAMPLE_PREDICTOR_VARIABLE_NAMES = [
+        "B205WC000.AM01",  # a supply temperature chilled water
+        "B106WS01.AM54",  # an external temperature
+    ]  # example predictor variables
+    ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES = []
+    ROOMWISE_GROUPINGS = {}
+    MODEL_CHANNEL_GROUPS = []
+
+    if use_cooler_valves:
+        cooler_valves = get_cooler_valves(metadata, enable_rooms=True)
+        cooler_valves_ids = cooler_valves['object_id'].unique().tolist()
+        print(f"Using {len(cooler_valves_ids)} cooler valves as predictor variables.")
+        EXAMPLE_PREDICTOR_VARIABLE_NAMES += cooler_valves_ids
+        MODEL_CHANNEL_GROUPS.append(('cooler valves', cooler_valves_ids))
+
+    if use_active_setpoints:
+        active_setpoints = get_active_setpoints(metadata).drop_duplicates(subset=['object_id'])
+        active_setpoints['room'] = active_setpoints['room'].fillna('NoRoom')
+        setpoints_by_room = active_setpoints.groupby('room')['object_id'].apply(list)
+        active_setpoints_ids = active_setpoints['object_id'].unique().tolist()
+        print(f"Using {len(active_setpoints_ids)} active setpoints as predictor variables.")
+        print(f"Number of rooms with active setpoints: {len(setpoints_by_room)}")
+        EXAMPLE_PREDICTOR_VARIABLE_NAMES += active_setpoints_ids
+        ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES += active_setpoints_ids
+        ROOMWISE_GROUPINGS['AvgActiveSetpoint_'] = setpoints_by_room
+        MODEL_CHANNEL_GROUPS.append(('active setpoints', active_setpoints_ids))
+
+    if use_fc_room_temps:
+        fc_room_temps = get_room_temperatures(metadata, class_id='FC')
+        fc_room_temps['room'] = fc_room_temps['room'].fillna('NoRoom')
+        fc_room_temp_ids = fc_room_temps['object_id'].unique().tolist()
+        fc_temp_by_room = fc_room_temps.groupby('room')['object_id'].apply(list)
+        print(f"Using {len(fc_room_temp_ids)} FC room temperature sensors as predictor variables.")
+        print(f"Number of rooms with FC room temperature sensors: {len(fc_temp_by_room)}")
+        EXAMPLE_PREDICTOR_VARIABLE_NAMES += fc_room_temp_ids
+        ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES += fc_room_temp_ids
+        ROOMWISE_GROUPINGS['AvgFCRoomTemp_'] = fc_temp_by_room
+        MODEL_CHANNEL_GROUPS.append(('FC room temperatures', fc_room_temp_ids))
+
+    if use_rc_room_temps:
+        rc_room_temps = get_room_temperatures(metadata, class_id='RC')
+        rc_room_temps['room'] = rc_room_temps['room'].fillna('NoRoom')
+        rc_room_temp_ids = rc_room_temps['object_id'].unique().tolist()
+        rc_temp_by_room = rc_room_temps.groupby('room')['object_id'].apply(list)
+        print(f"Using {len(rc_room_temp_ids)} RC room temperature sensors as predictor variables.")
+        print(f"Number of rooms with RC room temperature sensors: {len(rc_temp_by_room)}")
+        EXAMPLE_PREDICTOR_VARIABLE_NAMES += rc_room_temp_ids
+        ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES += rc_room_temp_ids
+        ROOMWISE_GROUPINGS['AvgRCRoomTemp_'] = rc_temp_by_room
+        MODEL_CHANNEL_GROUPS.append(('RC room temperatures', rc_room_temp_ids))
+
+    if use_co2_concentrations:
+        co2_concentration_sensors = get_co2_concentrations(metadata).copy()
+        co2_concentration_sensors['room'] = co2_concentration_sensors['room'].fillna('NoRoom')
+        co2_concentration_by_room = co2_concentration_sensors.groupby('room')['object_id'].apply(list)
+        co2_concentration_ids = co2_concentration_sensors['object_id'].unique().tolist()
+        print(f"Using {len(co2_concentration_ids)} CO2 concentration sensors as predictor variables.")
+        print(f"Number of rooms with CO2 concentration sensors: {len(co2_concentration_by_room)}")
+        EXAMPLE_PREDICTOR_VARIABLE_NAMES += co2_concentration_ids
+        ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES += co2_concentration_ids
+        ROOMWISE_GROUPINGS['AvgCO2Concentration_'] = co2_concentration_by_room
+        MODEL_CHANNEL_GROUPS.append(('CO2 concentrations', co2_concentration_ids))
+
+    if use_humidity_sensors:
+        humidity_sensors = get_humidity_sensors(metadata)
+        humidity_sensor_ids = humidity_sensors['object_id'].unique().tolist()
+        print(f"Using {len(humidity_sensor_ids)} humidity sensors as predictor variables.")
+        EXAMPLE_PREDICTOR_VARIABLE_NAMES += humidity_sensor_ids
+        MODEL_CHANNEL_GROUPS.append(('humidity sensors', humidity_sensor_ids))
+
+    if use_controller_building_sensors:
+        controller_building_sensors = get_controller_building_sensors(metadata, building_id='B205')
+        controller_building_sensor_ids = controller_building_sensors['object_id'].unique().tolist()
+        #removing already used predictor variables
+        controller_building_sensor_ids = list(set(controller_building_sensor_ids) - set(EXAMPLE_PREDICTOR_VARIABLE_NAMES))
+        if TARGET_VARIABLE_NAME in controller_building_sensor_ids:
+            controller_building_sensor_ids.remove(TARGET_VARIABLE_NAME)
+        print(f"Using {len(controller_building_sensor_ids)} controller building B205 sensors as predictor variables.")
+        EXAMPLE_PREDICTOR_VARIABLE_NAMES += controller_building_sensor_ids
+        MODEL_CHANNEL_GROUPS.append(('controller building B205 sensors', controller_building_sensor_ids))
+
+    print("Predictor variables:")
+    #print(EXAMPLE_PREDICTOR_VARIABLE_NAMES)
+    print(f"Using {len(EXAMPLE_PREDICTOR_VARIABLE_NAMES)} predictor variables.")
+    if interactive:
+        print('Do you want to proceed? (y/n)')
+        proceed = input()
+        if proceed.lower() != 'y':
+            print("Exiting.")
+            exit()
+
+    return EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS, MODEL_CHANNEL_GROUPS
     

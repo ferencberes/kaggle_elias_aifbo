@@ -21,7 +21,7 @@ import csv
 from datetime import datetime
 import glob
 from itertools import chain
-import os
+import os, json
 import numpy as np
 import pandas as pd
 import torch
@@ -40,34 +40,23 @@ torch.set_default_dtype(
     torch.float64
 )  # with lower than float64 precision, the eventual timestamps may be off
 
-data_dir = "data/kaggle_dl"
-metadata = pd.read_parquet(os.path.join(data_dir, "metadata.parquet"))
-feature_information = pd.read_csv('test_set_feature_information.csv', index_col=0)
-potential_features = feature_information[
-    (feature_information['missing_ratio'] < 0.2) &
-    (feature_information['nunique_count'] > 2)
-].copy()
-potential_features = potential_features.index.tolist()
-# keep only features that are available during the test set period
-metadata = metadata[metadata['object_id'].isin(potential_features)].copy()
-
 YEAR=2024
 DATA_DIR = "data"
-OUTPUTS_DIR = f"outputs_offline_{YEAR}"
+OUTPUTS_DIR = f"outputs_offline_channelexp_{YEAR}"
 TRAIN_DATA_FILE_PATHS = list(
     chain(
-        glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-01/RBHU/**/*.parquet", recursive=True
-        ),
-        glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-02/RBHU/**/*.parquet", recursive=True
-        ),
-        glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-03/RBHU/**/*.parquet", recursive=True
-        ),
-        glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-04/RBHU/**/*.parquet", recursive=True
-        ),
+        #glob.glob(
+        #    f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-01/RBHU/**/*.parquet", recursive=True
+        #),
+        #glob.glob(
+        #    f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-02/RBHU/**/*.parquet", recursive=True
+        #),
+        #glob.glob(
+        #    f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-03/RBHU/**/*.parquet", recursive=True
+        #),
+        #glob.glob(
+        #    f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-04/RBHU/**/*.parquet", recursive=True
+        #),
         glob.glob(
             f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-05/RBHU/**/*.parquet", recursive=True
         ),
@@ -83,112 +72,21 @@ TEST_INPUT_DATA_FILE_PATHS = list(
         glob.glob(
             f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-06/RBHU/**/*.parquet", recursive=True
         ),
-        glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-07/RBHU/**/*.parquet", recursive=True
-        ),
+        #glob.glob(
+        #    f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-07/RBHU/**/*.parquet", recursive=True
+        #),
     )
 )
 
-MAINTAIN_BEST_MODEL = False  # whether to maintain and return the best model during training
+rerun_all = True
 RESAMPLE_FREQ_MIN = 10  # the frequency in minutes to resample the raw irregularly sampled timeseries to, using ffill
 EPS = 1e-6
 TARGET_VARIABLE_NAME = "B205WC000.AM02"  # the target variable to be predicted
-EXAMPLE_PREDICTOR_VARIABLE_NAMES = [
-    "B205WC000.AM01",  # a supply temperature chilled water
-    "B106WS01.AM54",  # an external temperature
-    #extra features
-    #TODO
-]  # example predictor variables
 
-from feature_groups import get_cooler_valves, get_active_setpoints, get_co2_concentrations, get_humidity_sensors, get_controller_building_sensors, get_room_temperatures
-
-rerun_all = True
-
-use_cooler_valves = True
-use_active_setpoints = False
-use_fc_room_temps = True
-use_rc_room_temps = True
-
-use_co2_concentrations = False
-use_humidity_sensors = False
-use_controller_building_sensors = False
-
-if use_cooler_valves:
-    cooler_valves = get_cooler_valves(metadata, enable_rooms=True)
-    cooler_valves_ids = cooler_valves['object_id'].unique().tolist()
-    print(f"Using {len(cooler_valves_ids)} cooler valves as predictor variables.")
-    EXAMPLE_PREDICTOR_VARIABLE_NAMES += cooler_valves_ids
-
-#room_sizes = metadata[['room', 'bim_room_area']].dropna().drop_duplicates(subset=['room'])
-#topk_rooms = room_sizes.nlargest(50, 'bim_room_area')['room'].tolist()
-#metadata = metadata[metadata['room'].isin(topk_rooms)].copy()
-
-if use_active_setpoints:
-    active_setpoints = get_active_setpoints(metadata).drop_duplicates(subset=['object_id'])
-    setpoints_by_room = active_setpoints.groupby('room')['object_id'].apply(list)
-    active_setpoints_ids = active_setpoints['object_id'].unique().tolist()
-    print(f"Using {len(active_setpoints_ids)} active setpoints as predictor variables.")
-    print(f"Number of rooms with active setpoints: {len(setpoints_by_room)}")
-    EXAMPLE_PREDICTOR_VARIABLE_NAMES += active_setpoints_ids
-
-if use_fc_room_temps:
-    fc_room_temps = get_room_temperatures(metadata, class_id='FC')
-    fc_room_temp_ids = fc_room_temps['object_id'].unique().tolist()
-    fc_temp_by_room = fc_room_temps.groupby('room')['object_id'].apply(list)
-    print(f"Using {len(fc_room_temp_ids)} FC room temperature sensors as predictor variables.")
-    print(f"Number of rooms with FC room temperature sensors: {len(fc_temp_by_room)}")
-    EXAMPLE_PREDICTOR_VARIABLE_NAMES += fc_room_temp_ids
-
-if use_rc_room_temps:
-    rc_room_temps = get_room_temperatures(metadata, class_id='RC')
-    rc_room_temp_ids = rc_room_temps['object_id'].unique().tolist()
-    rc_temp_by_room = rc_room_temps.groupby('room')['object_id'].apply(list)
-    print(f"Using {len(rc_room_temp_ids)} RC room temperature sensors as predictor variables.")
-    print(f"Number of rooms with RC room temperature sensors: {len(rc_temp_by_room)}")
-    EXAMPLE_PREDICTOR_VARIABLE_NAMES += rc_room_temp_ids
-
-if use_co2_concentrations:
-    co2_concentration_sensors = get_co2_concentrations(metadata).copy()
-    co2_concentration_sensors['room'] = co2_concentration_sensors['room'].fillna('NoRoom')
-    #print(co2_concentration_sensors.isnull().mean().sort_values(ascending=False).head(10))
-    co2_concentration_by_room = co2_concentration_sensors.groupby('room')['object_id'].apply(list)
-    co2_concentration_ids = co2_concentration_sensors['object_id'].unique().tolist()
-    print(f"Using {len(co2_concentration_ids)} CO2 concentration sensors as predictor variables.")
-    print(f"Number of rooms with CO2 concentration sensors: {len(co2_concentration_by_room)}")
-    EXAMPLE_PREDICTOR_VARIABLE_NAMES += co2_concentration_ids
-
-if use_humidity_sensors:
-    humidity_sensors = get_humidity_sensors(metadata)
-    #TODO: there is high missing room rate (25 room out of almost 100 sensors)
-    #humidity_sensors['room'] = humidity_sensors['room'].fillna('NoRoom')
-    #humidity_by_room = humidity_sensors.groupby('room')['object_id'].apply(list)
-    humidity_sensor_ids = humidity_sensors['object_id'].unique().tolist()
-    print(f"Using {len(humidity_sensor_ids)} humidity sensors as predictor variables.")
-    #print(f"Number of rooms with humidity sensors: {len(humidity_by_room)}")
-    EXAMPLE_PREDICTOR_VARIABLE_NAMES += humidity_sensor_ids
-
-if use_controller_building_sensors:
-    controller_building_sensors = get_controller_building_sensors(metadata, building_id='B205')
-    controller_building_sensor_ids = controller_building_sensors['object_id'].unique().tolist()
-    #removing already used predictor variables
-    controller_building_sensor_ids = list(set(controller_building_sensor_ids) - set(EXAMPLE_PREDICTOR_VARIABLE_NAMES))
-    if TARGET_VARIABLE_NAME in controller_building_sensor_ids:
-        controller_building_sensor_ids.remove(TARGET_VARIABLE_NAME)
-    print(f"Using {len(controller_building_sensor_ids)} controller building B205 sensors as predictor variables.")
-    EXAMPLE_PREDICTOR_VARIABLE_NAMES += controller_building_sensor_ids
-
-print("Predictor variables:")
-#print(EXAMPLE_PREDICTOR_VARIABLE_NAMES)
-print(f"Using {len(EXAMPLE_PREDICTOR_VARIABLE_NAMES)} predictor variables.")
-print('Do you want to proceed? (y/n)')
-proceed = input()
-if proceed.lower() != 'y':
-    print("Exiting.")
-    exit()
+from feature_groups import prepare_predictor_variables
 
 SUBMISSION_FILE_TARGET_VARIABLE_COLUMN_NAME = "TARGET_VARIABLE"
 SUBMISSION_FILE_DATETIME_FORMAT = "%Y-%m-%d_%H:%M:%S"
-
 
 def simple_load_and_resample_data(
     data_file_paths, generate_sample_plots=None, save_load_df=None
@@ -248,7 +146,6 @@ def simple_load_and_resample_data(
             regular_dataframe_per_sensor.values(), join="outer", axis=1
         ).ffill()  # forward fill again, due to different ends of concatenants otherwise leading to NaNs
 
-    """#too many sensors are used to make a plot!
     if generate_sample_plots:
         n_plots = len(generate_sample_plots)
         fig, axs = plt.subplots(
@@ -264,7 +161,6 @@ def simple_load_and_resample_data(
             axs[i].legend(fontsize="small")
         plt.savefig(f"{OUTPUTS_DIR}/input_data_sample_timeseries_plot.png")
         plt.close(fig)
-    """
 
     if save_load_df and save:
         multivariate_timeseries_df.to_parquet(save_load_df)
@@ -402,7 +298,8 @@ def simple_eval_and_submission_creation(
 
 
 def simple_feature_dataset(
-    full_multivariate_timeseries_df, add_dummy_y=False, normalize=False, inspect_nans=True
+    full_multivariate_timeseries_df, add_dummy_y=False, normalize=False, inspect_nans=True,
+    EXAMPLE_PREDICTOR_VARIABLE_NAMES=[], ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES=[], ROOMWISE_GROUPINGS={}
 ):
     """Create a torch dataset from the multivariate timeseries dataframe, intended for causal prediction (just use past
     to predict future), consisting of samples of predictor features
@@ -450,67 +347,18 @@ def simple_feature_dataset(
     else:
         timeseries_df = timeseries_df.ffill().bfill().copy()
 
-    if use_active_setpoints:
-        for room, sp_ids in setpoints_by_room.items():
+    for key, grouping in ROOMWISE_GROUPINGS.items():
+        for room, sensor_ids in grouping.items():
             sensors_available = list(
-                set(sp_ids).intersection(set(timeseries_df.columns))
+                set(sensor_ids).intersection(set(timeseries_df.columns))
             )
             if len(sensors_available) == 0:
                 continue
-            room_col = 'SumActiveSetpoint_' + room
-            timeseries_df[room_col] = timeseries_df[sensors_available].sum(axis=1)
-            if not room_col in EXAMPLE_PREDICTOR_VARIABLE_NAMES:
-                EXAMPLE_PREDICTOR_VARIABLE_NAMES.append(room_col)
-
-    if use_fc_room_temps:
-        for room, temp_ids in fc_temp_by_room.items():
-            sensors_available = list(
-                set(temp_ids).intersection(set(timeseries_df.columns))
-            )
-            if len(sensors_available) == 0:
-                continue
-            room_col = 'AvgFCRoomTemp_' + room
+            room_col = key + room
             timeseries_df[room_col] = timeseries_df[sensors_available].mean(axis=1)
             if not room_col in EXAMPLE_PREDICTOR_VARIABLE_NAMES:
                 EXAMPLE_PREDICTOR_VARIABLE_NAMES.append(room_col)
-
-    if use_rc_room_temps:
-        for room, temp_ids in rc_temp_by_room.items():
-            sensors_available = list(
-                set(temp_ids).intersection(set(timeseries_df.columns))
-            )
-            if len(sensors_available) == 0:
-                continue
-            room_col = 'AvgRCRoomTemp_' + room
-            timeseries_df[room_col] = timeseries_df[sensors_available].mean(axis=1)
-            if not room_col in EXAMPLE_PREDICTOR_VARIABLE_NAMES:
-                EXAMPLE_PREDICTOR_VARIABLE_NAMES.append(room_col)
-
-    if use_co2_concentrations:
-        for room, co2_ids in co2_concentration_by_room.items():
-            sensors_available = list(
-                set(co2_ids).intersection(set(timeseries_df.columns))
-            )
-            if len(sensors_available) == 0:
-                continue
-            room_col = 'AvgCO2Concentration_' + room
-            timeseries_df[room_col] = timeseries_df[sensors_available].mean(axis=1)
-            if not room_col in EXAMPLE_PREDICTOR_VARIABLE_NAMES:
-                EXAMPLE_PREDICTOR_VARIABLE_NAMES.append(room_col)
-
-    """
-    if use_humidity_sensors:
-        for room, hum_ids in humidity_by_room.items():
-            sensors_available = list(
-                set(hum_ids).intersection(set(timeseries_df.columns))
-            )
-            if len(sensors_available) == 0:
-                continue
-            room_col = 'AvgHumidity_' + room
-            timeseries_df[room_col] = timeseries_df[sensors_available].mean(axis=1)
-            if not room_col in EXAMPLE_PREDICTOR_VARIABLE_NAMES:
-                EXAMPLE_PREDICTOR_VARIABLE_NAMES.append(room_col)
-    """
+        print(f"Added room-wise aggregated feature group '{key}' with {len(grouping)} rooms.")
 
     if add_dummy_y:
         timeseries_df[TARGET_VARIABLE_NAME] = np.nan
@@ -598,54 +446,13 @@ def simple_feature_dataset(
             num_classes=7,
         )
         selected_features.append(day_of_week)
-        """
-        yeartime_sin = data[
-            i + input_seq_len + predict_ahead, column_names.get_loc("yeartime_sin")
-        ].unsqueeze(0)
-        yeartime_cos = data[
-            i + input_seq_len + predict_ahead, column_names.get_loc("yeartime_cos")
-        ].unsqueeze(0)
-        
-        X.append(
-            torch.cat(
-                [
-                    timestamp,
-                    example_predictor_variable_0,
-                    example_predictor_variable_1,
-                    day_of_week,
-                    #yeartime_sin,
-                    #yeartime_cos,
-                    daytime_sin,
-                    daytime_cos,
-                ]
-            )
-        )
-        """
+
 
         for j in range(len(EXAMPLE_PREDICTOR_VARIABLE_NAMES)):
             col_name = EXAMPLE_PREDICTOR_VARIABLE_NAMES[j]
 
-            if use_active_setpoints:
-                if col_name in active_setpoints_ids:
-                    continue # skip raw setpoint values, use only room aggregated ones
-
-            if use_fc_room_temps:
-                if col_name in fc_room_temp_ids:
-                    continue # skip raw fc room temp sensor values, use only room aggregated ones
-
-            if use_rc_room_temps:
-                if col_name in rc_room_temp_ids:
-                    continue # skip raw rc room temp sensor values, use only room aggregated ones
-
-            if use_co2_concentrations:
-                if col_name in co2_concentration_ids:
-                    continue # skip raw co2 concentration values, use only room aggregated ones
-
-            """
-            if use_humidity_sensors:
-                if col_name in humidity_sensor_ids:
-                    continue # skip raw humidity sensor values, use only room aggregated ones
-            """
+            if col_name in ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES:
+                continue # skip room-wise aggregated only features here, they were already added above
             
             if col_name in column_names:
                 example_predictor_variable = normalization_fn(
@@ -682,7 +489,7 @@ def simple_feature_dataset(
     return dataset, info
 
 
-def simple_model_and_train(train_loader, vali_loader, loss_fn, maintain_best_model=True):
+def simple_model_and_train(train_loader, vali_loader, loss_fn, model_channel_groups, maintain_best_model=False):
     """Define a simple prediction model and train it on the given training data loader.
 
     Important: to be adapted for actual models for competition.
@@ -750,35 +557,24 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn, maintain_best_mod
         x.shape[-1] - 1
     )  # Get the input size from the first batch, subtract 1 for the timestamp
 
-    if use_cooler_valves or use_active_setpoints or use_co2_concentrations or use_humidity_sensors or use_controller_building_sensors:
+    if len(model_channel_groups) > 0:
+        model_report = {'input_size': input_size, 'model': 'MultiChannelAIFBOModel'}
         hidden_other = 128
+        model_report['hidden_other'] = hidden_other
         predictors_by_channels, hidden_by_channels = [], []
-        if use_cooler_valves:
-            predictors_by_channels.append(cooler_valves_ids)
-            hidden_by_channels.append(64)
-        if use_active_setpoints:
-            predictors_by_channels.append(setpoints_by_room.index.tolist())
-            hidden_by_channels.append(64)
-        if use_fc_room_temps:
-            predictors_by_channels.append(fc_temp_by_room.index.tolist())
-            hidden_by_channels.append(64)
-        if use_rc_room_temps:
-            predictors_by_channels.append(rc_temp_by_room.index.tolist())
-            hidden_by_channels.append(64)
-        if use_co2_concentrations:
-            predictors_by_channels.append(co2_concentration_by_room.index.tolist())
-            hidden_by_channels.append(64)
-        if use_humidity_sensors:
-            #predictors_by_channels.append(humidity_by_room.index.tolist())
-            predictors_by_channels.append(humidity_sensor_ids)
-            hidden_by_channels.append(32)#64)
-        if use_controller_building_sensors:
-            predictors_by_channels.append(controller_building_sensor_ids)
-            hidden_by_channels.append(64)
-
+        model_report['model_channel_groups'] = []
+        for desc, group_features in model_channel_groups:
+            predictors_by_channels.append(group_features)
+            if 'humidity' in desc:
+                hdim = 32
+            else:
+                hdim = 64
+            hidden_by_channels.append(hdim)
+            model_report['model_channel_groups'].append((desc, len(group_features), hdim))
         model = MultiChannelAIFBOModel(input_size=input_size, hidden_other=hidden_other, hidden_by_channels=hidden_by_channels, predictors_by_channels=predictors_by_channels)
     else:
         model = SimpleAIFBOModel(input_size=input_size)
+        model_report = {'input_size': input_size, 'model': 'SimpleAIFBOModel'}
     
     optimizer = torch.optim.Adam(model.parameters(), lr=2.5e-4)
 
@@ -829,7 +625,7 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn, maintain_best_mod
         )
     if maintain_best_model:
         model.load_state_dict(best_model_state_dict)
-    return model
+    return model, model_report
 
 
 if __name__ == "__main__":
@@ -837,6 +633,28 @@ if __name__ == "__main__":
     
     # Load raw data and prepare it into multivariate dataframes, and create dir for later outputs:
     os.makedirs(OUTPUTS_DIR, exist_ok=True)
+
+    use_cooler_valves = True
+    use_active_setpoints = False
+    use_fc_room_temps = False
+    use_rc_room_temps = False
+    use_co2_concentrations = False
+    use_humidity_sensors = False
+    use_controller_building_sensors = False
+
+    EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS, MODEL_CHANNEL_GROUPS = prepare_predictor_variables(
+        data_dir=f'{DATA_DIR}/kaggle_dl',
+        TARGET_VARIABLE_NAME=TARGET_VARIABLE_NAME,
+        interactive=True,
+        use_cooler_valves=use_cooler_valves,
+        use_active_setpoints=use_active_setpoints,
+        use_co2_concentrations=use_co2_concentrations,
+        use_humidity_sensors=use_humidity_sensors,
+        use_controller_building_sensors=use_controller_building_sensors,
+        use_fc_room_temps=use_fc_room_temps,
+        use_rc_room_temps=use_rc_room_temps,
+    )
+
     # name was shortened after C02 concentration update (AM22 channel included)
     prepared_data_dir = f"{OUTPUTS_DIR}/useCoolerV_{use_cooler_valves}_useActiveSp_{use_active_setpoints}_useCO2_{use_co2_concentrations}_useHumidity_{use_humidity_sensors}_useCtrlBldg_{use_controller_building_sensors}_useFCRoomT_{use_fc_room_temps}_useRCRoomT_{use_rc_room_temps}"
     os.makedirs(prepared_data_dir, exist_ok=True)
@@ -853,7 +671,7 @@ if __name__ == "__main__":
     else:
         full_train_df = simple_load_and_resample_data(
             TRAIN_DATA_FILE_PATHS,
-            generate_sample_plots=[TARGET_VARIABLE_NAME] + EXAMPLE_PREDICTOR_VARIABLE_NAMES,
+            #generate_sample_plots=[TARGET_VARIABLE_NAME],# + EXAMPLE_PREDICTOR_VARIABLE_NAMES,
             save_load_df=f"{OUTPUTS_DIR}/preproc_full_train_df_{YEAR}.parquet",
         )
 
@@ -868,18 +686,21 @@ if __name__ == "__main__":
 
         # Turn it into torch datasets for simple prediction from past to future, with simple features:
         full_train_dataset, full_train_dataset_info = simple_feature_dataset(
-            full_train_df, add_dummy_y=False, normalize=True, inspect_nans=True
+            full_train_df, add_dummy_y=False, normalize=True, inspect_nans=True,
+            EXAMPLE_PREDICTOR_VARIABLE_NAMES=EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES=ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS=ROOMWISE_GROUPINGS
         )
         torch.save(full_train_dataset, full_train_dataset_path)
         
         if YEAR > 2024:
             test_input_dataset, _ = simple_feature_dataset(
-                test_input_df, add_dummy_y=True, normalize=full_train_dataset_info, inspect_nans=False
+                test_input_df, add_dummy_y=True, normalize=full_train_dataset_info, inspect_nans=False,
+                EXAMPLE_PREDICTOR_VARIABLE_NAMES=EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES=ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS=ROOMWISE_GROUPINGS
             )
         else:
             # here we have the ground truth for test input data available
             test_input_dataset, _ = simple_feature_dataset(
-                test_input_df, add_dummy_y=False, normalize=full_train_dataset_info, inspect_nans=False
+                test_input_df, add_dummy_y=False, normalize=full_train_dataset_info, inspect_nans=False,
+                EXAMPLE_PREDICTOR_VARIABLE_NAMES=EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES=ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS=ROOMWISE_GROUPINGS
             )
 
         torch.save(test_input_dataset, test_input_dataset_path)
@@ -903,7 +724,9 @@ if __name__ == "__main__":
 
     # Define loss function, model, and perform training:
     loss_fn = nn.MSELoss()
-    model = simple_model_and_train(train_loader, vali_loader, loss_fn, maintain_best_model=MAINTAIN_BEST_MODEL)
+    model, report = simple_model_and_train(train_loader, vali_loader, loss_fn, MODEL_CHANNEL_GROUPS, maintain_best_model=False)
+    with open(f"{prepared_data_dir}/model_report.json", "w") as f:
+        json.dump(report, f, indent=4)
 
     # Evaluate model on train, validation, and test data, create plots, and create final prediction submission
     # dataframe (with datetime annotation), and save it as submission file CSV:
