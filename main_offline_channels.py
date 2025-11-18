@@ -45,18 +45,18 @@ DATA_DIR = "data"
 OUTPUTS_DIR = f"outputs_offline_channelexp_{YEAR}"
 TRAIN_DATA_FILE_PATHS = list(
     chain(
-        #glob.glob(
-        #    f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-01/RBHU/**/*.parquet", recursive=True
-        #),
-        #glob.glob(
-        #    f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-02/RBHU/**/*.parquet", recursive=True
-        #),
-        #glob.glob(
-        #    f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-03/RBHU/**/*.parquet", recursive=True
-        #),
-        #glob.glob(
-        #    f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-04/RBHU/**/*.parquet", recursive=True
-        #),
+        glob.glob(
+            f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-01/RBHU/**/*.parquet", recursive=True
+        ),
+        glob.glob(
+            f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-02/RBHU/**/*.parquet", recursive=True
+        ),
+        glob.glob(
+            f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-03/RBHU/**/*.parquet", recursive=True
+        ),
+        glob.glob(
+            f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-04/RBHU/**/*.parquet", recursive=True
+        ),
         glob.glob(
             f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-05/RBHU/**/*.parquet", recursive=True
         ),
@@ -72,9 +72,9 @@ TEST_INPUT_DATA_FILE_PATHS = list(
         glob.glob(
             f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-06/RBHU/**/*.parquet", recursive=True
         ),
-        #glob.glob(
-        #    f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-07/RBHU/**/*.parquet", recursive=True
-        #),
+        glob.glob(
+            f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-07/RBHU/**/*.parquet", recursive=True
+        ),
     )
 )
 
@@ -628,7 +628,7 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn, model_channel_gro
     return model, model_report
 
 
-if __name__ == "__main__":
+def run_channel_experiment(extra_channel_info=None, interactive=True):
     reload_prepared_pt_files = (not rerun_all)
     
     # Load raw data and prepare it into multivariate dataframes, and create dir for later outputs:
@@ -645,7 +645,7 @@ if __name__ == "__main__":
     EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS, MODEL_CHANNEL_GROUPS = prepare_predictor_variables(
         data_dir=f'{DATA_DIR}/kaggle_dl',
         TARGET_VARIABLE_NAME=TARGET_VARIABLE_NAME,
-        interactive=True,
+        interactive=interactive,
         use_cooler_valves=use_cooler_valves,
         use_active_setpoints=use_active_setpoints,
         use_co2_concentrations=use_co2_concentrations,
@@ -653,10 +653,13 @@ if __name__ == "__main__":
         use_controller_building_sensors=use_controller_building_sensors,
         use_fc_room_temps=use_fc_room_temps,
         use_rc_room_temps=use_rc_room_temps,
+        extra_channel_info=extra_channel_info
     )
 
     # name was shortened after C02 concentration update (AM22 channel included)
     prepared_data_dir = f"{OUTPUTS_DIR}/useCoolerV_{use_cooler_valves}_useActiveSp_{use_active_setpoints}_useCO2_{use_co2_concentrations}_useHumidity_{use_humidity_sensors}_useCtrlBldg_{use_controller_building_sensors}_useFCRoomT_{use_fc_room_temps}_useRCRoomT_{use_rc_room_temps}"
+    if extra_channel_info is not None:
+        prepared_data_dir += f"_extraInfo_{extra_channel_info[0]}"
     os.makedirs(prepared_data_dir, exist_ok=True)
     full_train_dataset_path = f"{prepared_data_dir}/full_train_dataset.pt"
     test_input_dataset_path = f"{prepared_data_dir}/test_input_dataset.pt"
@@ -780,3 +783,27 @@ if __name__ == "__main__":
     )
 
     print("Done.")
+
+if __name__ == "__main__":
+    channel_info_df = pd.read_csv('channel_groups_by_most_common_short_description.csv')
+    excluded_channels = [
+        'AC21', #cooler valves
+        'VT03_2', #active setpoints
+        'AM21', #co2 concentration
+        'AM01',#room temp
+    ]
+    excluded_channels += ['AM45', 'AM45_1', 'AM51']#humidity sensors
+    channel_info_df = channel_info_df[~channel_info_df['channel'].isin(excluded_channels)]
+    print(channel_info_df.head())
+    for _, row in channel_info_df.iterrows():
+        channel_id = row['channel']
+        short_desc = row['most_popular_short_description'].split(' (')[0]
+        missing_room_ratio = row['missing_room_ratio']
+        extra_channel_info = (channel_id, short_desc, missing_room_ratio)
+        print(extra_channel_info)
+        try:
+            run_channel_experiment(extra_channel_info=extra_channel_info, interactive=False)
+        except Exception as e:
+            print(f"Experiment with extra channel {extra_channel_info} failed with exception: {e}")
+        finally:
+            continue

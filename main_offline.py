@@ -105,7 +105,7 @@ from feature_groups import get_cooler_valves, get_active_setpoints, get_co2_conc
 rerun_all = True
 
 use_cooler_valves = True
-use_active_setpoints = False
+use_active_setpoints = True
 use_fc_room_temps = True
 use_rc_room_temps = True
 
