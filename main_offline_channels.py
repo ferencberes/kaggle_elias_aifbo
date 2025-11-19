@@ -34,8 +34,8 @@ from tqdm import tqdm
 from typing import List
 
 torch.manual_seed(0)
-#torch.set_default_device("cuda:3" if torch.cuda.is_available() else "cpu")
-torch.set_default_device("cuda:2" if torch.cuda.is_available() else "cpu")
+torch.set_default_device("cuda:3" if torch.cuda.is_available() else "cpu")
+#torch.set_default_device("cuda:2" if torch.cuda.is_available() else "cpu")
 print(torch.get_default_device())
 torch.set_default_dtype(
     torch.float64
@@ -627,9 +627,9 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn, model_channel_gro
     
     model_report['performance'] = {
         'epochs_trained': epoch,
-        'train_loss': avg_train_loss_running,
-        'train_loss_epoch': avg_train_loss_epoch,
-        'vali_loss': best_vali_loss
+        'train_loss': avg_train_loss_running.item(),
+        'train_loss_epoch': avg_train_loss_epoch.item(),
+        'vali_loss': best_vali_loss.item()
     }
 
     if maintain_best_model:
@@ -805,9 +805,8 @@ if __name__ == "__main__":
     ]
     excluded_channels += ['AM45', 'AM45_1', 'AM51']#humidity sensors
     channel_info_df = channel_info_df[~channel_info_df['channel'].isin(excluded_channels)]
-    #selected_channels = ['AM71', 'AM66', 'AM31', 'RA31','AM71']
-    #selected_channels = ['RA21', 'AC61', 'AM32', 'VQ21','AM02']
-    selected_channels = ['AM11', 'AM22', 'AC61']
+    selected_channels = ['AM71', 'AM66', 'AM31', 'RA31','AM71','AM111']
+    selected_channels += ['RA21', 'AC61', 'AM32', 'VQ21','AM02','AM22']
     print(channel_info_df.head())
     for _, row in channel_info_df.iterrows():
         channel_id = row['channel']
