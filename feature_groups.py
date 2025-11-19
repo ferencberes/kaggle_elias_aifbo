@@ -116,7 +116,7 @@ def get_channel_sensors_with_description(metadata, channel, description_pattern,
         channel_sensors = channel_sensors.nlargest(k, 'bim_room_area')
     return channel_sensors
 
-def prepare_predictor_variables(data_dir, TARGET_VARIABLE_NAME, interactive=True, use_cooler_valves=True, use_active_setpoints=False, use_fc_room_temps=False, use_rc_room_temps=False, use_co2_concentrations=False, use_humidity_sensors=False, use_controller_building_sensors=False, extra_channel_info=None):
+def prepare_predictor_variables(data_dir:str, TARGET_VARIABLE_NAME:str, interactive:bool=True, use_cooler_valves:bool=True, use_active_setpoints:bool=False, use_fc_room_temps:bool=False, use_rc_room_temps:bool=False, use_co2_concentrations:bool=False, use_humidity_sensors:bool=False, use_controller_building_sensors:bool=False, extra_channel_info:list=None):
     
     metadata = pd.read_parquet(os.path.join(data_dir, "metadata.parquet"))
     feature_information = pd.read_csv('test_set_feature_information.csv', index_col=0)
@@ -156,7 +156,7 @@ def prepare_predictor_variables(data_dir, TARGET_VARIABLE_NAME, interactive=True
         MODEL_CHANNEL_GROUPS.append(('active setpoints', setpoints_by_room.index.tolist()))
 
     if use_fc_room_temps:
-        fc_room_temps = get_room_temperatures(metadata, class_id='FC')
+        fc_room_temps = get_room_temperatures(metadata, class_id='FC').copy()
         fc_room_temps['room'] = fc_room_temps['room'].fillna('NoRoom')
         fc_room_temp_ids = fc_room_temps['object_id'].unique().tolist()
         fc_temp_by_room = fc_room_temps.groupby('room')['object_id'].apply(list)
@@ -168,7 +168,7 @@ def prepare_predictor_variables(data_dir, TARGET_VARIABLE_NAME, interactive=True
         MODEL_CHANNEL_GROUPS.append(('FC room temperatures', fc_temp_by_room.index.tolist()))
 
     if use_rc_room_temps:
-        rc_room_temps = get_room_temperatures(metadata, class_id='RC')
+        rc_room_temps = get_room_temperatures(metadata, class_id='RC').copy()
         rc_room_temps['room'] = rc_room_temps['room'].fillna('NoRoom')
         rc_room_temp_ids = rc_room_temps['object_id'].unique().tolist()
         rc_temp_by_room = rc_room_temps.groupby('room')['object_id'].apply(list)
@@ -211,21 +211,20 @@ def prepare_predictor_variables(data_dir, TARGET_VARIABLE_NAME, interactive=True
 
     extra_ids_count = 0
     if extra_channel_info:
-        channel_id, description_pattern, missing_room_ratio = extra_channel_info
-        extra_sensors = get_channel_sensors_with_description(metadata, channel_id, description_pattern)
-        extra_ids = extra_sensors['object_id'].unique().tolist()
-        print(f"Using {len(extra_ids)} extra sensors from channel {channel_id} with description pattern '{description_pattern}' as predictor variables.")
-        EXAMPLE_PREDICTOR_VARIABLE_NAMES += extra_ids
-        if missing_room_ratio < 0.1:
-            extra_by_rooms = extra_sensors.groupby('room')['object_id'].apply(list)
-            print(f"Number of rooms with extra sensors: {len(extra_by_rooms)}")
-            ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES += extra_ids
-            ROOMWISE_GROUPINGS[f'Avg{channel_id}_{description_pattern}_'] = extra_by_rooms
-            MODEL_CHANNEL_GROUPS.append((f'extra sensors {channel_id} {description_pattern}', extra_by_rooms.index.tolist()))
-        else:
-            MODEL_CHANNEL_GROUPS.append((f'extra sensors {channel_id} {description_pattern}', extra_ids))
-        extra_ids_count = len(extra_ids)
-
+        for channel_id, description_pattern, missing_room_ratio in extra_channel_info:
+            extra_sensors = get_channel_sensors_with_description(metadata, channel_id, description_pattern).copy()
+            extra_ids = extra_sensors['object_id'].unique().tolist()
+            print(f"Using {len(extra_ids)} extra sensors from channel {channel_id} with description pattern '{description_pattern}' as predictor variables.")
+            EXAMPLE_PREDICTOR_VARIABLE_NAMES += extra_ids
+            if missing_room_ratio < 0.1:
+                extra_by_rooms = extra_sensors.groupby('room')['object_id'].apply(list)
+                print(f"Number of rooms with extra sensors: {len(extra_by_rooms)}")
+                ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES += extra_ids
+                ROOMWISE_GROUPINGS[f'Avg{channel_id}_{description_pattern}_'] = extra_by_rooms
+                MODEL_CHANNEL_GROUPS.append((f'extra sensors {channel_id} {description_pattern}', extra_by_rooms.index.tolist()))
+            else:
+                MODEL_CHANNEL_GROUPS.append((f'extra sensors {channel_id} {description_pattern}', extra_ids))
+            extra_ids_count += len(extra_ids)
 
     print("Predictor variables:")
     #print(EXAMPLE_PREDICTOR_VARIABLE_NAMES)

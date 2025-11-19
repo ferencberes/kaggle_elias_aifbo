@@ -34,14 +34,14 @@ from tqdm import tqdm
 from typing import List
 
 torch.manual_seed(0)
-torch.set_default_device("cuda:3" if torch.cuda.is_available() else "cpu")
-#torch.set_default_device("cuda:2" if torch.cuda.is_available() else "cpu")
+#torch.set_default_device("cuda:3" if torch.cuda.is_available() else "cpu")
+torch.set_default_device("cuda:2" if torch.cuda.is_available() else "cpu")
 print(torch.get_default_device())
 torch.set_default_dtype(
     torch.float64
 )  # with lower than float64 precision, the eventual timestamps may be off
 
-YEAR=2024
+YEAR=2025#2024
 DATA_DIR = "data"
 OUTPUTS_DIR = f"outputs_offline_channelexp_{YEAR}"
 TRAIN_DATA_FILE_PATHS = list(
@@ -670,7 +670,10 @@ def run_channel_experiment(extra_channel_info=None, interactive=True):
     # name was shortened after C02 concentration update (AM22 channel included)
     prepared_data_dir = f"{OUTPUTS_DIR}/useCoolerV_{use_cooler_valves}_useActiveSp_{use_active_setpoints}_useCO2_{use_co2_concentrations}_useHumidity_{use_humidity_sensors}_useCtrlBldg_{use_controller_building_sensors}_useFCRoomT_{use_fc_room_temps}_useRCRoomT_{use_rc_room_temps}"
     if extra_channel_info is not None:
-        prepared_data_dir += f"_extraInfo_{extra_channel_info[0]}"
+        #prepared_data_dir += f"_extraInfo_{extra_channel_info[0]}"
+        prepared_data_dir += "_extraInfo"
+        for channel_id, _, _ in extra_channel_info:
+            prepared_data_dir += f"_{channel_id}"
     os.makedirs(prepared_data_dir, exist_ok=True)
     full_train_dataset_path = f"{prepared_data_dir}/full_train_dataset.pt"
     test_input_dataset_path = f"{prepared_data_dir}/test_input_dataset.pt"
@@ -794,7 +797,7 @@ def run_channel_experiment(extra_channel_info=None, interactive=True):
     )
 
     print("Done.")
-
+"""
 if __name__ == "__main__":
     channel_info_df = pd.read_csv('channel_groups_by_most_common_short_description.csv')
     excluded_channels = [
@@ -822,3 +825,19 @@ if __name__ == "__main__":
             print(f"Experiment with extra channel {extra_channel_info} failed with exception: {e}")
         finally:
             continue
+"""
+
+if __name__ == "__main__":
+    channel_info_df = pd.read_csv('channel_groups_by_most_common_short_description.csv')
+    selected_channels = ['AM02', 'AM31']
+    channel_info_df = channel_info_df[channel_info_df['channel'].isin(selected_channels)]
+    extra_channel_info = []
+    for _, row in channel_info_df.iterrows():
+        channel_id = row['channel']
+        if not channel_id in selected_channels:
+            continue
+        short_desc = row['most_popular_short_description'].split(' (')[0]
+        missing_room_ratio = row['missing_room_ratio']
+        extra_channel_info.append((channel_id, short_desc, missing_room_ratio))
+    print(extra_channel_info)
+    run_channel_experiment(extra_channel_info=extra_channel_info, interactive=True)
