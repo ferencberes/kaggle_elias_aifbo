@@ -34,10 +34,24 @@ A simple sample pipeline for load/preprocess/train/submission is contained in `m
 so that the file structure complies with the format required by the `main.py` script).
 2. Download additional data for 2024 provided by competition hosts from Zenodo, [part 1](https://zenodo.org/records/12590466), 
 [part 2](https://zenodo.org/records/14591934), and put it into the same folder `data/kaggle_dl/` so that the script can also use it. 
-3. TODO: preprocessing scripts
-4. Do `uv run main_multi_channels.py`.
-5. TODO: ensemble combination script
-6. Once run, this produces several outputs, among others the `submission_file.csv` which can then be uploaded to the competition
+3. Do `uv run main_multi_channels.py`.
+4. Once run, this produces several outputs, among others the `submission_file.csv` which can then be uploaded to the competition
+
+Running time
+---
+
+For training the neural networks, I used one node from a NVIDIA A100 GPU cluster.
+
+| **Runtime Component**        | **Baseline setup** | **Multichannel setup** |
+|------------------------------|--------------------|------------------------|
+| **Data Reload Time (mins)**  | 5.27               | 0.02                   |
+| **Feature Prep Time (mins)** | 0.27               | 21.39                  |
+| **Training Time (mins)**     | 4.65               | 8.71                   |
+| **Eval & Submission (mins)** | 0.04               | 0.06                   |
+| **Total Time (mins)**        | 10.23              | 30.18                  |
+
+My final submission was an ensemble that was the combination of the baseline model and the multichannel model.
+Thus, the **total runtime** is the sum of both runtimes, 10.23 + 30.18 = **40.41 minutes**.
 
 Purpose of the repository and disclaimer
 ---

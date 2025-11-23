@@ -28,7 +28,7 @@ torch.set_default_dtype(
 YEAR=2025
 #YEAR=2024
 DATA_DIR = "data"
-OUTPUTS_DIR = f"outputs_offline_channelexp_{YEAR}"
+OUTPUTS_DIR = f"outputs_{YEAR}"
 TRAIN_DATA_FILE_PATHS = list(
     chain(
         glob.glob(
@@ -644,7 +644,7 @@ def run_channel_experiment(extra_channel_info=None, interactive=True, use_cooler
     # based on the selected feature groups, prepare the predictor variable names, and other insructions for feature engineering, model initialization etc.:
     EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS, MODEL_CHANNEL_GROUPS, extra_ids_count = prepare_predictor_variables(
         data_dir=f'{DATA_DIR}/kaggle_dl',
-        TARGET_VARIABLE_NAME=TARGET_VARIABLE_NAME,
+        target_variable_name=TARGET_VARIABLE_NAME,
         interactive=interactive,
         use_cooler_valves=use_cooler_valves,
         use_active_setpoints=use_active_setpoints,
@@ -655,8 +655,8 @@ def run_channel_experiment(extra_channel_info=None, interactive=True, use_cooler
         use_rc_room_temps=use_rc_room_temps,
         extra_channel_info=extra_channel_info
     )
-    if extra_ids_count == 0:
-        return
+    #if extra_ids_count == 0:
+    #    return
 
     # name was shortened after C02 concentration update (AM22 channel included)
     prepared_data_dir = f"{OUTPUTS_DIR}/useCoolerV_{use_cooler_valves}_useActiveSp_{use_active_setpoints}_useCO2_{use_co2_concentrations}_useHumidity_{use_humidity_sensors}_useCtrlBldg_{use_controller_building_sensors}_useFCRoomT_{use_fc_room_temps}_useRCRoomT_{use_rc_room_temps}"
@@ -731,7 +731,7 @@ def run_channel_experiment(extra_channel_info=None, interactive=True, use_cooler
     with open(f"{prepared_data_dir}/model_report.json", "w") as f:
         json.dump(report, f, indent=4)
     training_end_ts = datetime.now()
-    training_elapsed_mins = (training_end_ts - training_start_ts).total_seconds() /
+    training_elapsed_mins = (training_end_ts - training_start_ts).total_seconds() / 60.0
 
     eval_and_submission_start_ts = datetime.now()
     # Evaluate model on train, validation, and test data, create plots, and create final prediction submission
@@ -768,8 +768,6 @@ def run_channel_experiment(extra_channel_info=None, interactive=True, use_cooler
             right_index=True,
             how="left",
         )
-    #print("Test prediction sample:")
-    #print(test_prediction_df_for_csv.head())
 
     test_prediction_df_for_csv.index = test_prediction_df.index.tz_localize(tzinfo)
     test_prediction_df_for_csv.index = test_prediction_df.index.strftime(
@@ -819,8 +817,7 @@ def run_and_eval_channels_for_2024():
     # extra channels that we want to run experiments for:    
     selected_channels = ['AM71', 'AM66', 'AM31', 'RA31','AM71','AM111']
     selected_channels += ['RA21', 'AC61', 'AM32', 'VQ21','AM02','AM22']
-    #print(channel_info_df.head())
-    
+
     # run experiments for each selected extra channel:
     for _, row in channel_info_df.iterrows():
         channel_id = row['channel']
@@ -861,7 +858,24 @@ def train_and_make_submission_for_2025():
     run_channel_experiment(extra_channel_info=extra_channel_info, interactive=True)
 
 def make_ensemble_submission_for_2025():
-    pass
+    baseline_submission_fp = 'outputs_2025/useCoolerV_False_useActiveSp_False_useCO2_False_useHumidity_False_useCtrlBldg_False_useFCRoomT_False_useRCRoomT_False/submission.csv'
+    if not os.path.exists(baseline_submission_fp):
+        print("Baseline submission file not found, cannot make ensemble submission.")
+        return
+    multichainel_submission_fp = 'outputs_2025/useCoolerV_True_useActiveSp_False_useCO2_False_useHumidity_False_useCtrlBldg_False_useFCRoomT_True_useRCRoomT_False_extraInfo_AM02/submission.csv'
+    if not os.path.exists(multichainel_submission_fp):
+        print("Multi-channel submission file not found, cannot make ensemble submission.")
+        return
+    baseline_df = pd.read_csv(baseline_submission_fp, index_col='ID')
+    multichannel_df = pd.read_csv(multichainel_submission_fp, index_col='ID')
+    #print(baseline_df.head())
+    #print(multichannel_df.head())
+    best_ensemble = 0.2 * multichannel_df + 0.8 * baseline_df
+    best_single = multichannel_df
+    final_submission = 0.5 * best_ensemble + 0.5 * best_single
+    final_submission_fp = 'outputs_2025/submission.csv'
+    final_submission.to_csv(final_submission_fp, index=True)
+    print(f"Ensemble submission file saved to {final_submission_fp}")
 
 def make_baseline_submission_for_2025():
     """
@@ -869,7 +883,7 @@ def make_baseline_submission_for_2025():
     without using any extra channels.
     """
     #disable all extra channels:
-    run_channel_experiment(extra_channel_info=None, interactive=False, use_cooler_valves=False, use_active_setpoints=False, use_fc_room_temps=False, use_rc_room_temps=False, use_co2_concentrations=False, use_humidity_sensors=False, use_controller_building_sensors=False)
+    run_channel_experiment(extra_channel_info=None, interactive=True, use_cooler_valves=False, use_active_setpoints=False, use_fc_room_temps=False, use_rc_room_temps=False, use_co2_concentrations=False, use_humidity_sensors=False, use_controller_building_sensors=False)
 
 if __name__ == "__main__":
     # You can set YEAR at the top of this file to either 2024 or 2025, to run the respective code paths.
@@ -877,9 +891,10 @@ if __name__ == "__main__":
         run_and_eval_channels_for_2024()
     elif YEAR == 2025:
         #first make a baseline submission without extra channels:
-        make_baseline_submission_for_2025()
+        #make_baseline_submission_for_2025()
         #then train and make submission with selected extra channels:
-        train_and_make_submission_for_2025()
-        #TODO: make ensemble submission
+        #train_and_make_submission_for_2025()
+        #finally make an ensemble submission from both:
+        make_ensemble_submission_for_2025()
     else:
         raise ValueError("YEAR must be either 2024 or 2025.")

@@ -17,5 +17,4 @@ def extract_channel_group_information(data_dir, output_fp, min_sensor_count=20):
     channel_info_df = pd.DataFrame({'most_popular_short_description': most_pop_short_desc_info, 'missing_room_ratio': missing_room_ratio})
     selected = pd.DataFrame(selected).join(channel_info_df)
     selected.columns = ['sensor_count', 'most_popular_short_description', 'missing_room_ratio']
-    print(selected.head())
     selected.to_csv(output_fp, index=True)
