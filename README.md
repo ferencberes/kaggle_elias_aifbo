@@ -21,20 +21,24 @@ Once uv is installed, we recommend the following steps:
 2. `uv venv`,
 3. then run `uv sync`.
 
-
 Set up and run simple load/preprocess/train/submission pipeline
 ---
 
-A simple sample pipeline for load/preprocess/train/submission is contained in `main.py`. Run it in the following way:
+**Run the modeling pipeline to produce my final submission for the competition (June and July 2025 data):**
 
 1. Download the competition data from Kaggle and put it into a (newly created) folder `data/kaggle_dl/` (there should then be folders like
 `data/kaggle_dl/RBHU-2025-01/` etc., 
 so that the file structure complies with the format required by the `main*.py` script).
-2. Download additional data for 2024 provided by competition hosts from Zenodo, [part 1](https://zenodo.org/records/12590466), 
-[part 2](https://zenodo.org/records/14591934), and put it into the same folder `data/kaggle_dl/` so that the script can also use it. 
-3. Run the original main script as a baseline model: `uv run main_baseline.py`.
-4. Run the multichannel model: `uv run main_multi_channels.py`. This sciprt also creates the ensemble of the baseline and multichannel model.
-5. Once run, this produces several outputs, among others the `outputs_2025/final_submission.csv` which reflects my final submission to the challenge.
+2. Run the fixed original main script as a baseline model: `uv run main_baseline.py`. A fix was needed to exclude erronous day of year feature calculation.
+3. Run the multichannel model: `uv run main_multi_channels.py`. This sciprt also creates the ensemble of the baseline and multichannel model.
+4. Once run, this produces several outputs, among others the `outputs_2025/final_submission.csv` which reflects my final submission to the challenge.
+
+**Extra experiment for 2024 data:**
+
+1. Download additional data for 2024 provided by competition hosts from Zenodo, [part 1](https://zenodo.org/records/12590466), 
+[part 2](https://zenodo.org/records/14591934), and put it into the same folder `data/kaggle_dl/` so that the script can also use it.
+2. Change the `YEAR` variable at the top of `main_multi_channels.py` to `2024`.
+3. Run `uv run main_multi_channels.py` to train and evaluate models for 2024 data. This setup covers extra channel choice validations for June and July 2024.
 
 Running time
 ---
