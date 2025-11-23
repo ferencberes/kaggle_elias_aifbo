@@ -1,31 +1,14 @@
-Example Code - AI-Based Modeling for Energy-Efficient Buildings - Competition
-===
-
+Kaggle Competition Solution Report - AI-Based Modeling for Energy-Efficient Buildings
+================================
 
 Intro
 ---
 
-This is a repository that can serve as an initialization for participating in the 
-ELIAS AI-Based Modeling for Energy-Efficient Buildings competition. 
-It contains simple versions of the data loading/preprocessing/training/submission building blocks of a method for that
-competition. This allows
-participants a quick way to get to the core method development. 
+This repository heavily builds upon the [example code](https://github.com/boschresearch/elias_aifbo/tree/main) provided by the competition hosts.
+I kept the main pipeline (data loading, preprocessing, model training, submission creation) and upgraded some parts to be able to use multiple sensor groups
+and to have a more efficient model to predict the state of the HVAC system three hours ahead.
 
-Note that all of the building blocks might have
-to be modified to obtain well-performing, robust methods, in particular, these aspects are worth improving:
-* take more or all of the covariate variables as predictors (there are hundreds), not just the current few example ones
-* also include the 2024 building sensor data from source Zenodo, [part 1](https://zenodo.org/records/12590466), 
-[part 2](https://zenodo.org/records/14591934), see competition page for details
-* some timeseries may rather need linear interpolation instead of the forward fill (ffill) that is currently used
-  (reason for the ffill is that, at least for some time series, the recording is change-triggered).
-* and of course the model and training which lies at the core of the competition, and is currently just a toy example
-
-Purpose of the repository and disclaimer
----
-
-This software is a research prototype, solely developed for and published as part of the aforementioned ELIAS competition.
-It will neither be maintained nor monitored in any way.
-
+More details about the task, data, and evaluation can be found on the [competition page](https://www.kaggle.com/competitions/ai-based-modeling-for-energy-efficient-buildings/overview).
 
 Software setup
 ---
@@ -47,14 +30,18 @@ A simple sample pipeline for load/preprocess/train/submission is contained in `m
 1. Download the competition data from Kaggle and put it into a (newly created) folder `data/kaggle_dl/` (there should then be folders like
 `data/kaggle_dl/RBHU-2025-01/` etc., 
 so that the file structure complies with the format required by the `main.py` script).
-2. Do `uv run main.py`.
-3. Once run, this produces several outputs, among others the `submission_file.csv` which can then be uploaded to the competition
+2. Download additional data for 2024 provided by competition hosts from Zenodo, [part 1](https://zenodo.org/records/12590466), 
+[part 2](https://zenodo.org/records/14591934), and put it into the same folder `data/kaggle_dl/` so that the script can also use it. 
+3. TODO: preprocessing scripts
+4. Do `uv run main_multi_channels.py`.
+5. TODO: ensemble combination script
+6. Once run, this produces several outputs, among others the `submission_file.csv` which can then be uploaded to the competition
 
-For further details see `main.py` where all functions (using PyTorch) as well as a sample execution are gathered and
-described in more detail.
+Purpose of the repository and disclaimer
+---
 
-
-
+This software is a research prototype, solely developed for and published as a solution to the aforementioned ELIAS competition.
+It will neither be maintained nor monitored in any way.
 
 License
 ---
