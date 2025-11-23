@@ -30,7 +30,7 @@ Set up and run simple load/preprocess/train/submission pipeline
 `data/kaggle_dl/RBHU-2025-01/` etc., 
 so that the file structure complies with the format required by the `main*.py` script).
 2. Run the fixed original main script as a baseline model: `uv run main_baseline.py`. A fix was needed to exclude erronous day of year feature calculation.
-3. Run the multichannel model: `uv run main_multi_channels.py`. This sciprt also creates the ensemble of the baseline and multichannel model.
+3. Run the multichannel model: `uv run main_multi_channels.py`. This script also creates the ensemble of the baseline (50%) and multichannel model (50%).
 4. Once run, this produces several outputs, among others the `outputs_2025/final_submission.csv` which reflects my final submission to the challenge.
 
 **Extra experiment for 2024 data:**
@@ -53,7 +53,7 @@ For training the neural networks, I used one node from a NVIDIA A100 GPU cluster
 | **Eval & Submission (mins)** | 0.04               | 0.06                   |
 | **Total Time (mins)**        | 10.23              | 30.18                  |
 
-My final submission was an ensemble that was the combination of the baseline model and the multichannel model.
+My final submission was an ensemble that was the combination of the baseline model and the best multichannel model.
 Thus, the **total runtime** is the sum of both runtimes, 10.23 + 30.18 = **40.41 minutes**.
 
 Purpose of the repository and disclaimer
