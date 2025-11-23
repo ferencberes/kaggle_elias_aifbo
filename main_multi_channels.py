@@ -15,6 +15,8 @@ from tqdm import tqdm
 
 from typing import List
 
+from preprocess import extract_channel_group_information
+
 torch.manual_seed(0)
 default_gpu = "cuda"
 torch.set_default_device(default_gpu if torch.cuda.is_available() else "cpu")
@@ -62,7 +64,6 @@ TEST_INPUT_DATA_FILE_PATHS = list(
     )
 )
 
-rerun_all = True
 RESAMPLE_FREQ_MIN = 10  # the frequency in minutes to resample the raw irregularly sampled timeseries to, using ffill
 EPS = 1e-6
 TARGET_VARIABLE_NAME = "B205WC000.AM02"  # the target variable to be predicted
@@ -624,7 +625,7 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn, model_channel_gro
     return model, model_report
 
 
-def run_channel_experiment(extra_channel_info=None, interactive=True):
+def run_channel_experiment(extra_channel_info=None, interactive=True, use_cooler_valves=True, use_active_setpoints=False, use_fc_room_temps=True, use_rc_room_temps=False, use_co2_concentrations=False, use_humidity_sensors=False, use_controller_building_sensors=False):
     """
     Without any parameters it was the entry point of the original main.py script provided by the competition hosts:
     https://github.com/boschresearch/elias_aifbo/blob/main/main.py
@@ -636,20 +637,9 @@ def run_channel_experiment(extra_channel_info=None, interactive=True):
         extra_channel_info: If provided, a list of tuples (channel_id, description, sensor_unit) to add as extra predictor variables to the input data.
         interactive: If True, the function will run in interactive mode, otherwise prompting the user whether to run the model withthe provided feature setup.
     """
-
-    reload_prepared_pt_files = (not rerun_all)
     
     # Load raw data and prepare it into multivariate dataframes, and create dir for later outputs:
     os.makedirs(OUTPUTS_DIR, exist_ok=True)
-
-    # you can set which feature groups to use here: but the final submission uses only cooler valves and fc room temps from the options below
-    use_cooler_valves = True
-    use_active_setpoints = False
-    use_fc_room_temps = True
-    use_rc_room_temps = False
-    use_co2_concentrations = False
-    use_humidity_sensors = False
-    use_controller_building_sensors = False
 
     # based on the selected feature groups, prepare the predictor variable names, and other insructions for feature engineering, model initialization etc.:
     EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS, MODEL_CHANNEL_GROUPS, extra_ids_count = prepare_predictor_variables(
@@ -676,53 +666,48 @@ def run_channel_experiment(extra_channel_info=None, interactive=True):
         for channel_id, _, _ in extra_channel_info:
             prepared_data_dir += f"_{channel_id}"
     os.makedirs(prepared_data_dir, exist_ok=True)
-    full_train_dataset_path = f"{prepared_data_dir}/full_train_dataset.pt"
-    test_input_dataset_path = f"{prepared_data_dir}/test_input_dataset.pt"
     tzinfo_path = f"{prepared_data_dir}/tzinfo.pkl"
 
-    if reload_prepared_pt_files and os.path.exists(full_train_dataset_path) and os.path.exists(test_input_dataset_path):
-        print("Loading prepared dataset files ...")
-        full_train_dataset = torch.load(full_train_dataset_path)
-        test_input_dataset = torch.load(test_input_dataset_path)
-        with open(tzinfo_path, "rb") as f:
-            tzinfo = pickle.load(f)
-    else:
-        full_train_df = simple_load_and_resample_data(
-            TRAIN_DATA_FILE_PATHS,
-            #generate_sample_plots=[TARGET_VARIABLE_NAME],# + EXAMPLE_PREDICTOR_VARIABLE_NAMES,
-            save_load_df=f"{OUTPUTS_DIR}/preproc_full_train_df_{YEAR}.parquet",
-        )
+    reload_start_ts = datetime.now()
+    full_train_df = simple_load_and_resample_data(
+        TRAIN_DATA_FILE_PATHS,
+        #generate_sample_plots=[TARGET_VARIABLE_NAME],# + EXAMPLE_PREDICTOR_VARIABLE_NAMES,
+        save_load_df=f"{OUTPUTS_DIR}/preproc_full_train_df_{YEAR}.parquet",
+    )
 
-        test_input_df = simple_load_and_resample_data(
-            TEST_INPUT_DATA_FILE_PATHS,
-            save_load_df=f"{OUTPUTS_DIR}/preproc_test_input_df_{YEAR}.parquet",
-        )
+    test_input_df = simple_load_and_resample_data(
+        TEST_INPUT_DATA_FILE_PATHS,
+        save_load_df=f"{OUTPUTS_DIR}/preproc_test_input_df_{YEAR}.parquet",
+    )
+    reload_end_ts = datetime.now()
+    reload_elapsed_mins = (reload_end_ts - reload_start_ts).total_seconds() / 60.0
+
+    tzinfo = full_train_df.index.tzinfo
+    with open(tzinfo_path, "wb") as f:
+        pickle.dump(tzinfo, f)
+
+    feature_prep_start_ts = datetime.now()
+    # Turn it into torch datasets for simple prediction from past to future, with simple features:
+    full_train_dataset, full_train_dataset_info = simple_feature_dataset(
+        full_train_df, add_dummy_y=False, normalize=True, inspect_nans=True,
+        EXAMPLE_PREDICTOR_VARIABLE_NAMES=EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES=ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS=ROOMWISE_GROUPINGS
+    )
     
-        tzinfo = full_train_df.index.tzinfo
-        with open(tzinfo_path, "wb") as f:
-            pickle.dump(tzinfo, f)
-
-        # Turn it into torch datasets for simple prediction from past to future, with simple features:
-        full_train_dataset, full_train_dataset_info = simple_feature_dataset(
-            full_train_df, add_dummy_y=False, normalize=True, inspect_nans=True,
+    if YEAR > 2024:
+        test_input_dataset, _ = simple_feature_dataset(
+            test_input_df, add_dummy_y=True, normalize=full_train_dataset_info, inspect_nans=False,
             EXAMPLE_PREDICTOR_VARIABLE_NAMES=EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES=ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS=ROOMWISE_GROUPINGS
         )
-        torch.save(full_train_dataset, full_train_dataset_path)
-        
-        if YEAR > 2024:
-            test_input_dataset, _ = simple_feature_dataset(
-                test_input_df, add_dummy_y=True, normalize=full_train_dataset_info, inspect_nans=False,
-                EXAMPLE_PREDICTOR_VARIABLE_NAMES=EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES=ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS=ROOMWISE_GROUPINGS
-            )
-        else:
-            # here we have the ground truth for test input data available
-            test_input_dataset, _ = simple_feature_dataset(
-                test_input_df, add_dummy_y=False, normalize=full_train_dataset_info, inspect_nans=False,
-                EXAMPLE_PREDICTOR_VARIABLE_NAMES=EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES=ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS=ROOMWISE_GROUPINGS
-            )
+    else:
+        # here we have the ground truth for test input data available
+        test_input_dataset, _ = simple_feature_dataset(
+            test_input_df, add_dummy_y=False, normalize=full_train_dataset_info, inspect_nans=False,
+            EXAMPLE_PREDICTOR_VARIABLE_NAMES=EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES=ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS=ROOMWISE_GROUPINGS
+        )
+    feature_prep_end_ts = datetime.now()
+    feature_prep_elapsed_mins = (feature_prep_end_ts - feature_prep_start_ts).total_seconds() / 60.0
 
-        torch.save(test_input_dataset, test_input_dataset_path)
-
+    training_start_ts = datetime.now()
     # Turn it into data loaders for training, validation, and submission (where submission loader differs in that
     # it has no target variable values, i.e. y):
     len_full_train_dataset = len(full_train_dataset)
@@ -745,7 +730,10 @@ def run_channel_experiment(extra_channel_info=None, interactive=True):
     model, report = simple_model_and_train(train_loader, vali_loader, loss_fn, MODEL_CHANNEL_GROUPS, maintain_best_model=False)
     with open(f"{prepared_data_dir}/model_report.json", "w") as f:
         json.dump(report, f, indent=4)
+    training_end_ts = datetime.now()
+    training_elapsed_mins = (training_end_ts - training_start_ts).total_seconds() /
 
+    eval_and_submission_start_ts = datetime.now()
     # Evaluate model on train, validation, and test data, create plots, and create final prediction submission
     # dataframe (with datetime annotation), and save it as submission file CSV:
     res_eval_train = simple_eval_and_submission_creation(
@@ -796,6 +784,16 @@ def run_channel_experiment(extra_channel_info=None, interactive=True):
         index=True,
         quoting=csv.QUOTE_ALL,
     )
+    eval_and_submission_end_ts = datetime.now()
+    eval_and_submission_elapsed_mins = (eval_and_submission_end_ts - eval_and_submission_start_ts).total_seconds() / 60.0
+
+    print("Experiment Summary:")
+    print(f"Extra Channel Info: {extra_channel_info}")
+    print(f"Data Reload Time (mins): {reload_elapsed_mins:.2f}")
+    print(f"Feature Preparation Time (mins): {feature_prep_elapsed_mins:.2f}")
+    print(f"Training Time (mins): {training_elapsed_mins:.2f}")
+    print(f"Eval & Submission Time (mins): {eval_and_submission_elapsed_mins:.2f}")
+
     print("Done.")
 
 def run_and_eval_channels_for_2024():
@@ -803,7 +801,10 @@ def run_and_eval_channels_for_2024():
     The entry point to validate extra channel performance for 2024 June and July.
     """
     # load information about most common descriptions and missing room ratios for channels:
-    channel_info_df = pd.read_csv('channel_groups_by_most_common_short_description.csv')
+    channel_info_fp = 'channel_groups_by_most_common_short_description.csv'
+    if not os.path.exists(channel_info_fp):
+        extract_channel_group_information(os.path.join(DATA_DIR, 'kaggle_dl'), output_fp=channel_info_fp)
+    channel_info_df = pd.read_csv(channel_info_fp)
     
     # some channels can be enabled or disabled with dedicated flags (e.g. see above 'use_cooler_valves' etc.)
     excluded_channels = [
@@ -841,7 +842,11 @@ def train_and_make_submission_for_2025():
     """
     The entry point to train a model with selected extra channels and make a submission for the competition (June, July 2025).
     """
-    channel_info_df = pd.read_csv('channel_groups_by_most_common_short_description.csv')
+    channel_info_fp = 'channel_groups_by_most_common_short_description.csv'
+    if not os.path.exists(channel_info_fp):
+        extract_channel_group_information(os.path.join(DATA_DIR, 'kaggle_dl'), output_fp=channel_info_fp)
+    channel_info_df = pd.read_csv(channel_info_fp)
+    
     selected_channels = ['AM02']
     channel_info_df = channel_info_df[channel_info_df['channel'].isin(selected_channels)]
     extra_channel_info = []
@@ -855,11 +860,26 @@ def train_and_make_submission_for_2025():
     print(extra_channel_info)
     run_channel_experiment(extra_channel_info=extra_channel_info, interactive=True)
 
+def make_ensemble_submission_for_2025():
+    pass
+
+def make_baseline_submission_for_2025():
+    """
+    The entry point to make a baseline submission for the competition (June, July 2025),
+    without using any extra channels.
+    """
+    #disable all extra channels:
+    run_channel_experiment(extra_channel_info=None, interactive=False, use_cooler_valves=False, use_active_setpoints=False, use_fc_room_temps=False, use_rc_room_temps=False, use_co2_concentrations=False, use_humidity_sensors=False, use_controller_building_sensors=False)
+
 if __name__ == "__main__":
     # You can set YEAR at the top of this file to either 2024 or 2025, to run the respective code paths.
     if YEAR == 2024:
         run_and_eval_channels_for_2024()
     elif YEAR == 2025:
+        #first make a baseline submission without extra channels:
+        make_baseline_submission_for_2025()
+        #then train and make submission with selected extra channels:
         train_and_make_submission_for_2025()
+        #TODO: make ensemble submission
     else:
         raise ValueError("YEAR must be either 2024 or 2025.")

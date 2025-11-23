@@ -13,6 +13,8 @@ More details about the task, data, and evaluation can be found on the [competiti
 Software setup
 ---
 
+**TODO: update environment to contain every package, for parquet loading as well!!!**
+
 The package manager used to set up this repo and that we recommend to get a virtual environment to run the scripts 
 is [uv](https://docs.astral.sh/uv/guides/install-python/). We recommend to install it.
 
