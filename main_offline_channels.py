@@ -44,8 +44,8 @@ torch.set_default_dtype(
     torch.float64
 )  # with lower than float64 precision, the eventual timestamps may be off
 
-#YEAR=2025
-YEAR=2024
+YEAR=2025
+#YEAR=2024
 DATA_DIR = "data"
 OUTPUTS_DIR = f"outputs_offline_channelexp_{YEAR}"
 TRAIN_DATA_FILE_PATHS = list(
@@ -833,10 +833,10 @@ if __name__ == "__main__":
 
 if __name__ == "__main__":
     channel_info_df = pd.read_csv('channel_groups_by_most_common_short_description.csv')
-    #selected_channels = ['AM02', 'AM31']
+    selected_channels = ['AM02']#, 'AM31']
     #selected_channels = ['AM02', 'AM11']
     #selected_channels = ['AM02', 'AM22']
-    selected_channels = ['AM02', 'VQ21']
+    #selected_channels = ['AM02', 'VQ21']
     channel_info_df = channel_info_df[channel_info_df['channel'].isin(selected_channels)]
     extra_channel_info = []
     for _, row in channel_info_df.iterrows():
