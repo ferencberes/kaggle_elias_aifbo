@@ -10,7 +10,6 @@ This script:
 """
 
 import os
-import glob
 import pandas as pd
 from scipy.stats import spearmanr
 import numpy as np

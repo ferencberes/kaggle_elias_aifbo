@@ -1,21 +1,3 @@
-"""This is a script that can serve as an initialization for participating in the
-ELIAS Bosch AI for Building Optimisation prediction competition.
-
-It contains simple versions of the essential components for
-* loading and preprocessing data,
-* defining a simple torch pairs dataset for causal prediction (i.e., using only past to predict future),
-* defining a simple toy example model and training it,
-* and evaluating and creating the submission file (`submission_file.csv`) of that model on the test input data.
-
-Note that all of the components are just starting points, and many aspects can still be improved, see also `README.md`.
-"""
-
-# Copyright (c) 2025 Robert Bosch GmbH
-# All rights reserved.
-#
-# This source code is licensed under the MIT license found in the
-# LICENSE file in the root directory of this source tree.
-
 import pickle
 import csv
 from datetime import datetime
