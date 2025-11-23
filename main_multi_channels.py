@@ -16,10 +16,7 @@ from tqdm import tqdm
 from typing import List
 
 torch.manual_seed(0)
-#default_gpu = "cuda:2"
-default_gpu = "cuda:3"
-#default_gpu = "cuda:0"
-#default_gpu = "cuda:1"
+default_gpu = "cuda"
 torch.set_default_device(default_gpu if torch.cuda.is_available() else "cpu")
 print(torch.get_default_device())
 torch.set_default_dtype(
@@ -75,6 +72,7 @@ from feature_groups import prepare_predictor_variables
 SUBMISSION_FILE_TARGET_VARIABLE_COLUMN_NAME = "TARGET_VARIABLE"
 SUBMISSION_FILE_DATETIME_FORMAT = "%Y-%m-%d_%H:%M:%S"
 
+# LEFT UNTOUCHED, original function is used from main.py provided by competition hosts:
 def simple_load_and_resample_data(
     data_file_paths, generate_sample_plots=None, save_load_df=None
 ):
@@ -156,7 +154,7 @@ def simple_load_and_resample_data(
 
     return multivariate_timeseries_df
 
-
+# ALMOST UNTOUCHED, just a few changes related to the YEAR variable at the end:
 def simple_eval_and_submission_creation(
     loader,
     model,
@@ -306,6 +304,8 @@ def simple_feature_dataset(
         normalize: normalize selected columns of the timeseries data.
             if True, take mean and std from the data (and return that info),
             if a dict, use the contained mean and std.
+        inspect_nans: If True, the dataset creation will start from the first time index where all predictor variables have valid (non-NaN) values.
+
     Returns:
         A torch dataset containing pairs of input features and target variable values. Note that both, input features'
         and target variable's first entry is the timestamp of the prediction, i.e., the time at which the target
@@ -334,6 +334,7 @@ def simple_feature_dataset(
     else:
         timeseries_df = timeseries_df.ffill().bfill().copy()
 
+    # add room-wise aggregated features:
     for key, grouping in ROOMWISE_GROUPINGS.items():
         for room, sensor_ids in grouping.items():
             sensors_available = list(
@@ -439,7 +440,7 @@ def simple_feature_dataset(
             col_name = EXAMPLE_PREDICTOR_VARIABLE_NAMES[j]
 
             if col_name in ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES:
-                continue # skip room-wise aggregated only features here, they were already added above
+                continue # skip room-wise aggregated sensors here, they were already added above
             
             if col_name in column_names:
                 example_predictor_variable = normalization_fn(
@@ -624,11 +625,24 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn, model_channel_gro
 
 
 def run_channel_experiment(extra_channel_info=None, interactive=True):
+    """
+    Without any parameters it was the entry point of the original main.py script provided by the competition hosts:
+    https://github.com/boschresearch/elias_aifbo/blob/main/main.py
+
+    Since, then I implemented a model called MultiChannelAIFBOModel (see above) that can handle multiple groups of channels as input,
+    and this function now serves as an entry point for running experiments with different extra channels added to the input data.
+
+    Args:
+        extra_channel_info: If provided, a list of tuples (channel_id, description, sensor_unit) to add as extra predictor variables to the input data.
+        interactive: If True, the function will run in interactive mode, otherwise prompting the user whether to run the model withthe provided feature setup.
+    """
+
     reload_prepared_pt_files = (not rerun_all)
     
     # Load raw data and prepare it into multivariate dataframes, and create dir for later outputs:
     os.makedirs(OUTPUTS_DIR, exist_ok=True)
 
+    # you can set which feature groups to use here: but the final submission uses only cooler valves and fc room temps from the options below
     use_cooler_valves = True
     use_active_setpoints = False
     use_fc_room_temps = True
@@ -637,6 +651,7 @@ def run_channel_experiment(extra_channel_info=None, interactive=True):
     use_humidity_sensors = False
     use_controller_building_sensors = False
 
+    # based on the selected feature groups, prepare the predictor variable names, and other insructions for feature engineering, model initialization etc.:
     EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS, MODEL_CHANNEL_GROUPS, extra_ids_count = prepare_predictor_variables(
         data_dir=f'{DATA_DIR}/kaggle_dl',
         TARGET_VARIABLE_NAME=TARGET_VARIABLE_NAME,
@@ -781,11 +796,16 @@ def run_channel_experiment(extra_channel_info=None, interactive=True):
         index=True,
         quoting=csv.QUOTE_ALL,
     )
-
     print("Done.")
-"""
-if __name__ == "__main__":
+
+def run_and_eval_channels_for_2024():
+    """
+    The entry point to validate extra channel performance for 2024 June and July.
+    """
+    # load information about most common descriptions and missing room ratios for channels:
     channel_info_df = pd.read_csv('channel_groups_by_most_common_short_description.csv')
+    
+    # some channels can be enabled or disabled with dedicated flags (e.g. see above 'use_cooler_valves' etc.)
     excluded_channels = [
         'AC21', #cooler valves
         'VT03_2', #active setpoints
@@ -794,15 +814,20 @@ if __name__ == "__main__":
     ]
     excluded_channels += ['AM45', 'AM45_1', 'AM51']#humidity sensors
     channel_info_df = channel_info_df[~channel_info_df['channel'].isin(excluded_channels)]
+    
+    # extra channels that we want to run experiments for:    
     selected_channels = ['AM71', 'AM66', 'AM31', 'RA31','AM71','AM111']
     selected_channels += ['RA21', 'AC61', 'AM32', 'VQ21','AM02','AM22']
-    print(channel_info_df.head())
+    #print(channel_info_df.head())
+    
+    # run experiments for each selected extra channel:
     for _, row in channel_info_df.iterrows():
         channel_id = row['channel']
         if not channel_id in selected_channels:
             continue
         short_desc = row['most_popular_short_description'].split(' (')[0]
         missing_room_ratio = row['missing_room_ratio']
+        # extra channel info is a tuple needed for the function 'prepare_predictor_variables' (see above)
         extra_channel_info = (channel_id, short_desc, missing_room_ratio)
         print(extra_channel_info)
         try:
@@ -811,14 +836,13 @@ if __name__ == "__main__":
             print(f"Experiment with extra channel {extra_channel_info} failed with exception: {e}")
         finally:
             continue
-"""
 
-if __name__ == "__main__":
+def train_and_make_submission_for_2025():
+    """
+    The entry point to train a model with selected extra channels and make a submission for the competition (June, July 2025).
+    """
     channel_info_df = pd.read_csv('channel_groups_by_most_common_short_description.csv')
-    selected_channels = ['AM02']#, 'AM31']
-    #selected_channels = ['AM02', 'AM11']
-    #selected_channels = ['AM02', 'AM22']
-    #selected_channels = ['AM02', 'VQ21']
+    selected_channels = ['AM02']
     channel_info_df = channel_info_df[channel_info_df['channel'].isin(selected_channels)]
     extra_channel_info = []
     for _, row in channel_info_df.iterrows():
@@ -830,3 +854,12 @@ if __name__ == "__main__":
         extra_channel_info.append((channel_id, short_desc, missing_room_ratio))
     print(extra_channel_info)
     run_channel_experiment(extra_channel_info=extra_channel_info, interactive=True)
+
+if __name__ == "__main__":
+    # You can set YEAR at the top of this file to either 2024 or 2025, to run the respective code paths.
+    if YEAR == 2024:
+        run_and_eval_channels_for_2024()
+    elif YEAR == 2025:
+        train_and_make_submission_for_2025()
+    else:
+        raise ValueError("YEAR must be either 2024 or 2025.")

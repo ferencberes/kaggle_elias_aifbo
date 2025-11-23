@@ -1,3 +1,6 @@
+import pandas as pd
+import os
+
 external_weather_measurements = [
     'B106WS01.AM50',  # light direction - follows daily / annual pattern
     'B106WS01.AM51',  # light intensity - follows daily / annual pattern
@@ -11,61 +14,16 @@ external_weather_measurements = [
     'B106WS01.AM57',  # wind speed
 ]
 
-import pandas as pd
-import os
-
-def aggregate_sensor_values(selected_sensor_metadata, timeseries_df, key_col, id_col='object_id', value_agg_func='mean', weight_col=None, weight_agg_func='max'):
-    sensors_by_key = selected_sensor_metadata.groupby(key_col)[id_col].apply(list).to_dict()
-    if weight_col:
-        weight_by_key = selected_sensor_metadata.groupby(key_col)[weight_col].agg(weight_agg_func).to_dict()
-        sum_weight = sum(weight_by_key.values())
-    columns = set(timeseries_df.columns)
-    new_feature = pd.Series(0, index=timeseries_df.index, dtype=float)
-    for key, sensors in sensors_by_key.items():
-        available_sensors = list(set(sensors).intersection(columns))
-        if not available_sensors:
-            continue
-        agg_value = timeseries_df[available_sensors].agg(value_agg_func, axis=1)
-        if weight_col:
-            weight = weight_by_key[key] / sum_weight
-        else:
-            weight = 1.0 / len(sensors_by_key)
-        new_feature += agg_value * weight
-    return new_feature
-
-def add_room_return_temp_features(metadata, timeseries_df):
-    return_temp_features = metadata[(metadata['building']=='B201') & (metadata['bde_group']=='RC') & (metadata['dimension_index'] == 2.0) & (metadata['conversion_index'] == 118.0)]
-    return_room_temp = return_temp_features[return_temp_features['description'].str.upper().str.startswith('ROOM TEMPERATURE')].copy()
+def get_cooler_valves(metadata, enable_rooms=True):
+    """
+    Get cooler valve sensors from metadata.
     
-    if return_room_temp.empty:
-        print("No return room temperature sensors found for B201 RC")
-        return timeseries_df
-    
-    return_room_temp['bim_room_description'] = return_room_temp['bim_room_description'].fillna('NoDescription')
-    return_room_temp['bim_room_category'] = return_room_temp['bim_room_category'].fillna('NoCategory')
-    return_room_temp['bim_energy_category'] = return_room_temp['bim_energy_category'].fillna('NoEnergyCategory')
-
-    temp_by_room_type = {}
-    for col in ['bim_room_description', 'bim_energy_category']:#, 'bim_room_category']:
-        print(f"{col}: {return_room_temp[col].nunique()} unique values")
-        room_meta = return_room_temp[col].unique()
-        for description in room_meta:
-            desc_metadata = return_room_temp[return_room_temp[col] == description]
-            weighted_temp = aggregate_sensor_values(desc_metadata, timeseries_df, key_col='room', weight_col='bim_room_area')# avg room temp weighted by room area
-            temp_by_room_type[description] = weighted_temp
-
-    temp_by_room_type['AllRooms'] = aggregate_sensor_values(return_room_temp, timeseries_df, key_col='room', weight_col='bim_room_area')# avg room temp weighted by room area
-
-    new_feature_cols = []
-    for description, temp_series in temp_by_room_type.items():
-        feature_name = f'B201_RC_ReturnRoomTemp_{description.replace(" ", "_").replace("/", "_")}'
-        timeseries_df[feature_name] = temp_series
-        new_feature_cols.append(feature_name)
-        #print(f"Added feature: {feature_name}")
-
-    return timeseries_df, new_feature_cols
-
-def get_cooler_valves(metadata, enable_rooms=False):
+    Args:
+        metadata (pd.DataFrame): Metadata DataFrame containing sensor information.
+        enable_rooms (bool): If True, include valves assigned to rooms; if False, exclude them.
+    Returns:
+        pd.DataFrame: DataFrame of cooler valve sensors.
+    """
     cooler_valves = metadata[metadata['channel']=='AC21']
     if enable_rooms:
         return cooler_valves
@@ -73,13 +31,30 @@ def get_cooler_valves(metadata, enable_rooms=False):
         return cooler_valves[cooler_valves['room'].isnull()]
     
 def get_active_setpoints(metadata, k=None):
-    # room information is always available for VT03_2 setpoints
+    """
+    Get active setpoint sensors from metadata.
+    
+    Args:
+        metadata (pd.DataFrame): Metadata DataFrame containing sensor information.
+        k (int, optional): Number of top sensors to return based on room area. If None, return all.
+    Returns:
+        pd.DataFrame: DataFrame of active setpoint sensors.
+    """
     active_setpoints = metadata[metadata['channel']=='VT03_2']
     if k is not None:
         active_setpoints = active_setpoints.nlargest(k, 'bim_room_area')
     return active_setpoints
 
 def get_co2_concentrations(metadata, k=None):
+    """
+    Get CO2 concentration sensors from metadata.
+    
+    Args:
+        metadata (pd.DataFrame): Metadata DataFrame containing sensor information.
+        k (int, optional): Number of top sensors to return based on room area. If None, return all.
+    Returns:
+        pd.DataFrame: DataFrame of CO2 concentration sensors.
+    """
     co2_sensors = metadata[(metadata['channel']=='AM21') & (metadata['dimension_text'].str.lower()=='ppm')]
     #sometimes CO2 concentration has AM22 channels and much more (AM23, AM24 etc. !!!) as well.. so I have more sensors but no extra room attributed to this change
     #co2_sensors = metadata[(metadata['channel'].isin(['AM21', 'AM22'])) & (metadata['dimension_text'].str.lower()=='ppm')]
@@ -89,6 +64,15 @@ def get_co2_concentrations(metadata, k=None):
     return co2_sensors
 
 def get_humidity_sensors(metadata, k=None):
+    """
+    Get humidity sensors from metadata.
+    
+    Args:
+        metadata (pd.DataFrame): Metadata DataFrame containing sensor information.
+        k (int, optional): Number of top sensors to return based on room area. If None, return all.
+    Returns:
+        pd.DataFrame: DataFrame of humidity sensors.
+    """
     humidity_sensors = metadata[metadata['channel'].isin(['AM45', 'AM45_1', 'AM51'])]
     excluded_ids = [
         'B106WS01.AM51', #light intensity sensor
@@ -99,35 +83,105 @@ def get_humidity_sensors(metadata, k=None):
     return humidity_sensors
 
 def get_controller_building_sensors(metadata, building_id='B205', excluded_channels=['AC21', 'VT03_2', 'AM21', 'AM45', 'AM45_1', 'AM51']):
+    """
+    Get sensors from a specific building, excluding certain channels.
+    
+    Args:
+        metadata (pd.DataFrame): Metadata DataFrame containing sensor information.
+        building_id (str): Building identifier to filter sensors.
+        excluded_channels (list): List of channels to exclude.
+    Returns:
+        pd.DataFrame: DataFrame of sensors from the specified building controller.
+    """
     building_sensors = metadata[metadata['object_id'].str.startswith(building_id)] 
     if excluded_channels:
         building_sensors = building_sensors[~building_sensors['channel'].isin(excluded_channels)]
     return building_sensors
 
 def get_room_temperatures(metadata, class_id='FC', k=None):
+    """
+    Get AM01 room temperature sensors for a specific class (FC or RC).
+    
+    Args:
+        metadata (pd.DataFrame): Metadata DataFrame containing sensor information.
+        class_id (str): Class identifier ('FC' or 'RC') to filter sensors.
+        k (int, optional): Number of top sensors to return based on room area. If None, return all.
+    Returns:
+        pd.DataFrame: DataFrame of room temperature sensors for the specified class.
+    """
     fancoil_temps = metadata[(metadata['object_id'].str.startswith('B201'+class_id)) & (metadata['description'].str.upper().str.contains('ROOM TEMPERATURE')) & (metadata['channel']=='AM01')]
     if k is not None:
         fancoil_temps = fancoil_temps.nlargest(k, 'bim_room_area')
     return fancoil_temps
 
 def get_channel_sensors_with_description(metadata, channel, description_pattern, k=None):
+    """
+    Get sensors from a specific channel with descriptions starting with a given pattern.
+
+    Args:
+        metadata (pd.DataFrame): Metadata DataFrame containing sensor information.
+        channel (str): Channel identifier to filter sensors.
+        description_pattern (str): Description pattern to filter sensors.
+        k (int, optional): Number of top sensors to return based on room area. If None, return all.
+    Returns:
+        pd.DataFrame: DataFrame of sensors from the specified channel with matching descriptions.
+    """
     channel_sensors = metadata[(metadata['channel']==channel) & (metadata['description'].str.upper().str.startswith(description_pattern.upper()))]
     if k is not None:
         channel_sensors = channel_sensors.nlargest(k, 'bim_room_area')
     return channel_sensors
 
-def prepare_predictor_variables(data_dir:str, TARGET_VARIABLE_NAME:str, interactive:bool=True, use_cooler_valves:bool=True, use_active_setpoints:bool=False, use_fc_room_temps:bool=False, use_rc_room_temps:bool=False, use_co2_concentrations:bool=False, use_humidity_sensors:bool=False, use_controller_building_sensors:bool=False, extra_channel_info:list=None):
-    
-    metadata = pd.read_parquet(os.path.join(data_dir, "metadata.parquet"))
+def select_potential_sensors_for_test_period(metadata, missing_ratio_threshold=0.2, nunique_count_threshold=2):
+    """
+    Select potential sensors for the test period based on missing ratio and unique count thresholds.
+    Args:
+        metadata (pd.DataFrame): Metadata DataFrame containing sensor information.
+        missing_ratio_threshold (float): Maximum allowed missing ratio for sensors.
+        nunique_count_threshold (int): Minimum required unique count for sensors.
+    Returns:
+        pd.DataFrame: Filtered metadata DataFrame with potential sensors.
+    """
+    #this csv file is generated during data preprocessing and saved to disk
     feature_information = pd.read_csv('test_set_feature_information.csv', index_col=0)
     potential_features = feature_information[
-        (feature_information['missing_ratio'] < 0.2) &
-        (feature_information['nunique_count'] > 2)
+        (feature_information['missing_ratio'] < missing_ratio_threshold) &
+        (feature_information['nunique_count'] > nunique_count_threshold)
     ].copy()
     potential_features = potential_features.index.tolist()
-    # keep only features that are available during the test set period
     metadata = metadata[metadata['object_id'].isin(potential_features)].copy()
+    return metadata
 
+def prepare_predictor_variables(data_dir:str, target_variable_name:str, interactive:bool=True, use_cooler_valves:bool=True, use_active_setpoints:bool=False, use_fc_room_temps:bool=False, use_rc_room_temps:bool=False, use_co2_concentrations:bool=False, use_humidity_sensors:bool=False, use_controller_building_sensors:bool=False, extra_channel_info:list=None):
+    """
+    Prepare predictor variable names, and instructions for feature engineering and model channel groups.
+    Extra channel info should be a list of tuples in the form (channel_id, description_pattern, missing_room_ratio).
+    Based on the missing_room_ratio, the function decides whether to use room-wise aggregation or not for the extra channels.
+
+    Args:
+        data_dir (str): Directory containing the metadata.parquet file.
+        target_variable_name (str): Name of the target variable.
+        interactive (bool): If True, prompt user for confirmation before proceeding.
+        use_cooler_valves (bool): If True, include cooler valve sensors as predictors.
+        use_active_setpoints (bool): If True, include active setpoint sensors as predictors.
+        use_fc_room_temps (bool): If True, include FC room temperature sensors as predictors.
+        use_rc_room_temps (bool): If True, include RC room temperature sensors as predictors.
+        use_co2_concentrations (bool): If True, include CO2 concentration sensors as predictors.
+        use_humidity_sensors (bool): If True, include humidity sensors as predictors.
+        use_controller_building_sensors (bool): If True, include controller building sensors as predictors.
+        extra_channel_info (list): List of tuples with extra channel info in the form (channel_id, description_pattern, missing_room_ratio).
+    Returns:
+        tuple: (EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS, MODEL_CHANNEL_GROUPS, extra_ids_count)
+
+        EXAMPLE_PREDICTOR_VARIABLE_NAMES (list): List of all predictor variable names.
+        ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES (list): List of predictor variable names that are room-wise aggregated only.
+        ROOMWISE_GROUPINGS (dict): Dictionary mapping between rooms and sensor IDs for that room for each channel group.
+        MODEL_CHANNEL_GROUPS (List(list)): List of final features for each channel group. For some these are the original object IDs, but for those where room-wise aggregation is used, these are the room names. 
+        extra_ids_count (int): Count of extra sensor IDs added from extra_channel_info.
+    """
+    
+    metadata = pd.read_parquet(os.path.join(data_dir, "metadata.parquet"))
+    metadata = select_potential_sensors_for_test_period(metadata, missing_ratio_threshold=0.2, nunique_count_threshold=2)
+    
     EXAMPLE_PREDICTOR_VARIABLE_NAMES = [
         "B205WC000.AM01",  # a supply temperature chilled water
         "B106WS01.AM54",  # an external temperature
@@ -203,8 +257,8 @@ def prepare_predictor_variables(data_dir:str, TARGET_VARIABLE_NAME:str, interact
         controller_building_sensor_ids = controller_building_sensors['object_id'].unique().tolist()
         #removing already used predictor variables
         controller_building_sensor_ids = list(set(controller_building_sensor_ids) - set(EXAMPLE_PREDICTOR_VARIABLE_NAMES))
-        if TARGET_VARIABLE_NAME in controller_building_sensor_ids:
-            controller_building_sensor_ids.remove(TARGET_VARIABLE_NAME)
+        if target_variable_name in controller_building_sensor_ids:
+            controller_building_sensor_ids.remove(target_variable_name)
         print(f"Using {len(controller_building_sensor_ids)} controller building B205 sensors as predictor variables.")
         EXAMPLE_PREDICTOR_VARIABLE_NAMES += controller_building_sensor_ids
         MODEL_CHANNEL_GROUPS.append(('controller building B205 sensors', controller_building_sensor_ids))
