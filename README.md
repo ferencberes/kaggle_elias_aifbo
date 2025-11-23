@@ -13,8 +13,6 @@ More details about the task, data, and evaluation can be found on the [competiti
 Software setup
 ---
 
-**TODO: update environment to contain every package, for parquet loading as well!!!**
-
 The package manager used to set up this repo and that we recommend to get a virtual environment to run the scripts 
 is [uv](https://docs.astral.sh/uv/guides/install-python/). We recommend to install it.
 
@@ -31,11 +29,12 @@ A simple sample pipeline for load/preprocess/train/submission is contained in `m
 
 1. Download the competition data from Kaggle and put it into a (newly created) folder `data/kaggle_dl/` (there should then be folders like
 `data/kaggle_dl/RBHU-2025-01/` etc., 
-so that the file structure complies with the format required by the `main.py` script).
+so that the file structure complies with the format required by the `main*.py` script).
 2. Download additional data for 2024 provided by competition hosts from Zenodo, [part 1](https://zenodo.org/records/12590466), 
 [part 2](https://zenodo.org/records/14591934), and put it into the same folder `data/kaggle_dl/` so that the script can also use it. 
-3. Do `uv run main_multi_channels.py`.
-4. Once run, this produces several outputs, among others the `outputs_2025/final_submission.csv` which reflects my final submission to the challenge.
+3. Run the original main script as a baseline model: `uv run main_baseline.py`.
+4. Run the multichannel model: `uv run main_multi_channels.py`. This sciprt also creates the ensemble of the baseline and multichannel model.
+5. Once run, this produces several outputs, among others the `outputs_2025/final_submission.csv` which reflects my final submission to the challenge.
 
 Running time
 ---

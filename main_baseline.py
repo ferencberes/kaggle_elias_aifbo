@@ -1,9 +1,26 @@
-import pickle
+"""This is a script that can serve as an initialization for participating in the
+ELIAS Bosch AI for Building Optimisation prediction competition.
+
+It contains simple versions of the essential components for
+* loading and preprocessing data,
+* defining a simple torch pairs dataset for causal prediction (i.e., using only past to predict future),
+* defining a simple toy example model and training it,
+* and evaluating and creating the submission file (`submission_file.csv`) of that model on the test input data.
+
+Note that all of the components are just starting points, and many aspects can still be improved, see also `README.md`.
+"""
+
+# Copyright (c) 2025 Robert Bosch GmbH
+# All rights reserved.
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
 import csv
 from datetime import datetime
 import glob
 from itertools import chain
-import os, json
+import os
 import numpy as np
 import pandas as pd
 import torch
@@ -13,67 +30,62 @@ import matplotlib.pyplot as plt
 import torchvision
 from tqdm import tqdm
 
-from typing import List
-
-from preprocess import extract_channel_group_information
-
 torch.manual_seed(0)
-default_gpu = "cuda"
-torch.set_default_device(default_gpu if torch.cuda.is_available() else "cpu")
+torch.set_default_device("cuda" if torch.cuda.is_available() else "cpu")
 print(torch.get_default_device())
 torch.set_default_dtype(
     torch.float64
 )  # with lower than float64 precision, the eventual timestamps may be off
 
-YEAR=2025
-#YEAR=2024
+
 DATA_DIR = "data"
-OUTPUTS_DIR = f"outputs_{YEAR}"
+OUTPUTS_DIR = "outputs"
 TRAIN_DATA_FILE_PATHS = list(
     chain(
         glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-01/RBHU/**/*.parquet", recursive=True
+            f"{DATA_DIR}/kaggle_dl/RBHU-2025-01/RBHU/**/*.parquet", recursive=True
         ),
         glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-02/RBHU/**/*.parquet", recursive=True
+            f"{DATA_DIR}/kaggle_dl/RBHU-2025-02/RBHU/**/*.parquet", recursive=True
         ),
         glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-03/RBHU/**/*.parquet", recursive=True
+            f"{DATA_DIR}/kaggle_dl/RBHU-2025-03/RBHU/**/*.parquet", recursive=True
         ),
         glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-04/RBHU/**/*.parquet", recursive=True
+            f"{DATA_DIR}/kaggle_dl/RBHU-2025-04/RBHU/**/*.parquet", recursive=True
         ),
         glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-05/RBHU/**/*.parquet", recursive=True
+            f"{DATA_DIR}/kaggle_dl/RBHU-2025-05/RBHU/**/*.parquet", recursive=True
         ),
     )
 )
-TEST_START_DATETIME = datetime(YEAR, 6, 1)  # start of test set
+TEST_START_DATETIME = datetime(2025, 6, 1)  # start of test set
 TEST_INPUT_DATA_FILE_PATHS = list(
     chain(
         glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-05/RBHU/**/*.parquet",
+            f"{DATA_DIR}/kaggle_dl/RBHU-2025-05/RBHU/**/*.parquet",
             recursive=True,
         ),  # just for the lag
         glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-06/RBHU/**/*.parquet", recursive=True
+            f"{DATA_DIR}/kaggle_dl/RBHU-2025-06/RBHU/**/*.parquet", recursive=True
         ),
         glob.glob(
-            f"{DATA_DIR}/kaggle_dl/RBHU-{YEAR}-07/RBHU/**/*.parquet", recursive=True
+            f"{DATA_DIR}/kaggle_dl/RBHU-2025-07/RBHU/**/*.parquet", recursive=True
         ),
     )
 )
-
 RESAMPLE_FREQ_MIN = 10  # the frequency in minutes to resample the raw irregularly sampled timeseries to, using ffill
 EPS = 1e-6
 TARGET_VARIABLE_NAME = "B205WC000.AM02"  # the target variable to be predicted
-
-from feature_groups import prepare_predictor_variables
-
+EXAMPLE_PREDICTOR_VARIABLE_NAMES = [
+    "B205WC000.AM01",  # a supply temperature chilled water
+    "B106WS01.AM54",  # an external temperature
+]  # example predictor variables
+SUBMISSION_FILE_PATH = f"{OUTPUTS_DIR}/submission_file.csv"
 SUBMISSION_FILE_TARGET_VARIABLE_COLUMN_NAME = "TARGET_VARIABLE"
 SUBMISSION_FILE_DATETIME_FORMAT = "%Y-%m-%d_%H:%M:%S"
 
-# LEFT UNTOUCHED, original function is used from main.py provided by competition hosts:
+
 def simple_load_and_resample_data(
     data_file_paths, generate_sample_plots=None, save_load_df=None
 ):
@@ -155,7 +167,7 @@ def simple_load_and_resample_data(
 
     return multivariate_timeseries_df
 
-# ALMOST UNTOUCHED, just a few changes related to the YEAR variable at the end:
+
 def simple_eval_and_submission_creation(
     loader,
     model,
@@ -242,10 +254,6 @@ def simple_eval_and_submission_creation(
         ys_true = torch.cat(ys_true_list, dim=0)
         ys_pred = torch.cat(ys_pred_list, dim=0)
         res["ys_pred"] = ys_pred
-        if YEAR <= 2024:
-            res["ys_true"] = ys_true
-        else:
-            res["ys_true"] = None
 
         if save_fig is not None or create_submission_df:
             ys_true_df = pd.DataFrame(
@@ -271,21 +279,15 @@ def simple_eval_and_submission_creation(
             if create_submission_df:
                 if create_submission_df == True:
                     res["ys_pred_df"] = ys_pred_df
-                    res["ys_true_df"] = ys_true_df
                 elif isinstance(create_submission_df, datetime):
                     res["ys_pred_df"] = ys_pred_df[
                         ys_pred_df.index >= create_submission_df
                     ]
-                    if YEAR <= 2024:
-                        res["ys_true_df"] = ys_true_df[
-                            ys_true_df.index >= create_submission_df
-                        ]
     return res
 
 
 def simple_feature_dataset(
-    full_multivariate_timeseries_df, add_dummy_y=False, normalize=False, inspect_nans=True,
-    EXAMPLE_PREDICTOR_VARIABLE_NAMES=[], ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES=[], ROOMWISE_GROUPINGS={}
+    full_multivariate_timeseries_df, add_dummy_y=False, normalize=False
 ):
     """Create a torch dataset from the multivariate timeseries dataframe, intended for causal prediction (just use past
     to predict future), consisting of samples of predictor features
@@ -305,8 +307,6 @@ def simple_feature_dataset(
         normalize: normalize selected columns of the timeseries data.
             if True, take mean and std from the data (and return that info),
             if a dict, use the contained mean and std.
-        inspect_nans: If True, the dataset creation will start from the first time index where all predictor variables have valid (non-NaN) values.
-
     Returns:
         A torch dataset containing pairs of input features and target variable values. Note that both, input features'
         and target variable's first entry is the timestamp of the prediction, i.e., the time at which the target
@@ -328,26 +328,8 @@ def simple_feature_dataset(
             if col in full_multivariate_timeseries_df.columns
         ]
     ]
-
-    if inspect_nans:
-        first_valid_idx = timeseries_df.notna().all(axis=1).idxmax()
-        timeseries_df = timeseries_df.loc[first_valid_idx:].copy()
-    else:
-        timeseries_df = timeseries_df.ffill().bfill().copy()
-
-    # add room-wise aggregated features:
-    for key, grouping in ROOMWISE_GROUPINGS.items():
-        for room, sensor_ids in grouping.items():
-            sensors_available = list(
-                set(sensor_ids).intersection(set(timeseries_df.columns))
-            )
-            if len(sensors_available) == 0:
-                continue
-            room_col = key + room
-            timeseries_df[room_col] = timeseries_df[sensors_available].mean(axis=1)
-            if not room_col in EXAMPLE_PREDICTOR_VARIABLE_NAMES:
-                EXAMPLE_PREDICTOR_VARIABLE_NAMES.append(room_col)
-        print(f"Added room-wise aggregated feature group '{key}' with {len(grouping)} rooms.")
+    first_valid_idx = timeseries_df.notna().all(axis=1).idxmax()
+    timeseries_df = timeseries_df.loc[first_valid_idx:]
 
     if add_dummy_y:
         timeseries_df[TARGET_VARIABLE_NAME] = np.nan
@@ -359,7 +341,7 @@ def simple_feature_dataset(
         timeseries_df.index.hour * 60 + timeseries_df.index.minute
     )
     timeseries_df["day_of_week"] = timeseries_df.index.dayofweek
-    """#due to the bug this feature had no meaning, commenting out for now
+    """# ERROR in the original code: this was dayofweek instead of dayofyear
     timeseries_df["day_of_year"] = timeseries_df.index.dayofweek
     timeseries_df["yeartime_sin"] = np.sin(
         2 * np.pi * timeseries_df["day_of_year"] / 365
@@ -368,7 +350,6 @@ def simple_feature_dataset(
         2 * np.pi * timeseries_df["day_of_year"] / 365
     )
     """
-
     timeseries_df["daytime_sin"] = np.sin(
         2 * np.pi * timeseries_df["minute_of_day"] / (24 * 60)
     )
@@ -377,8 +358,6 @@ def simple_feature_dataset(
     )
 
     column_names = timeseries_df.columns
-
-    #print(column_names.value_counts())
 
     if normalize:
         if normalize == True:
@@ -408,57 +387,59 @@ def simple_feature_dataset(
 
     X = []
     Y = []
-
-    pbar = tqdm(total=(data.shape[0] - input_seq_len - predict_ahead) // stride)
     for i in range(0, data.shape[0] - input_seq_len - predict_ahead, stride):
-        selected_features = []
-        
         timestamp = data[
             i + input_seq_len + predict_ahead, column_names.get_loc("timestamp")
         ].unsqueeze(0)
-        selected_features.append(timestamp)
 
+        example_predictor_variable_0 = normalization_fn(
+            data[
+                i : i + input_seq_len : input_seq_step,
+                column_names.get_loc(EXAMPLE_PREDICTOR_VARIABLE_NAMES[0]),
+            ],
+            EXAMPLE_PREDICTOR_VARIABLE_NAMES[0],
+        )
+        example_predictor_variable_1 = normalization_fn(
+            data[
+                i : i + input_seq_len : input_seq_step,
+                column_names.get_loc(EXAMPLE_PREDICTOR_VARIABLE_NAMES[1]),
+            ],
+            EXAMPLE_PREDICTOR_VARIABLE_NAMES[1],
+        )
         daytime_sin = data[
             i + input_seq_len + predict_ahead, column_names.get_loc("daytime_sin")
         ].unsqueeze(0)
-        selected_features.append(daytime_sin)
-
         daytime_cos = data[
             i + input_seq_len + predict_ahead, column_names.get_loc("daytime_cos")
         ].unsqueeze(0)
-        selected_features.append(daytime_cos)
-
         day_of_week = torch.nn.functional.one_hot(
             data[
                 i + input_seq_len + predict_ahead, column_names.get_loc("day_of_week")
             ].to(dtype=torch.long),
             num_classes=7,
         )
-        selected_features.append(day_of_week)
-
-
-        for j in range(len(EXAMPLE_PREDICTOR_VARIABLE_NAMES)):
-            col_name = EXAMPLE_PREDICTOR_VARIABLE_NAMES[j]
-
-            if col_name in ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES:
-                continue # skip room-wise aggregated sensors here, they were already added above
-            
-            if col_name in column_names:
-                example_predictor_variable = normalization_fn(
-                    data[
-                        i : i + input_seq_len : input_seq_step,
-                        column_names.get_loc(col_name),
-                    ],
-                    col_name,
-                )
-            else:
-                example_predictor_variable = torch.zeros(
-                    input_seq_len // input_seq_step,
-                    dtype=torch.get_default_dtype(),
-                )
-            selected_features.append(example_predictor_variable)
-
-        X.append(torch.cat(selected_features))
+        """
+        yeartime_sin = data[
+            i + input_seq_len + predict_ahead, column_names.get_loc("yeartime_sin")
+        ].unsqueeze(0)
+        yeartime_cos = data[
+            i + input_seq_len + predict_ahead, column_names.get_loc("yeartime_cos")
+        ].unsqueeze(0)
+        """
+        X.append(
+            torch.cat(
+                [
+                    timestamp,
+                    example_predictor_variable_0,
+                    example_predictor_variable_1,
+                    day_of_week,
+                    #yeartime_sin,
+                    #yeartime_cos,
+                    daytime_sin,
+                    daytime_cos,
+                ]
+            )
+        )
 
         target_variable = data[
             i + input_seq_len + predict_ahead,
@@ -466,9 +447,6 @@ def simple_feature_dataset(
         ].unsqueeze(0)
 
         Y.append(torch.cat([timestamp, target_variable]))
-
-        pbar.update(1)
-    pbar.close()
 
     X = torch.stack(X)
     Y = torch.stack(Y)
@@ -478,7 +456,7 @@ def simple_feature_dataset(
     return dataset, info
 
 
-def simple_model_and_train(train_loader, vali_loader, loss_fn, model_channel_groups, maintain_best_model=False):
+def simple_model_and_train(train_loader, vali_loader, loss_fn):
     """Define a simple prediction model and train it on the given training data loader.
 
     Important: to be adapted for actual models for competition.
@@ -497,78 +475,15 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn, model_channel_gro
             timestamp_of_prediction, x_core = x[:, :1], x[:, 1:]
             y_core = self.mlp(x_core)
             return torch.cat([timestamp_of_prediction, y_core], dim=1)
-        
-    class MultiChannelAIFBOModel(nn.Module):
-        def __init__(self, input_size:int, hidden_other:int, hidden_by_channels:List[int], predictors_by_channels:List[list]):
-            super().__init__()
-            assert len(hidden_by_channels) == len(predictors_by_channels), "Length of hidden_by_channels must match length of predictors_by_channels"
-            print(f"Input size: {input_size}") # timestamp has already been excluded from input_size
-            input_seq_len = int(60 / RESAMPLE_FREQ_MIN) * 1  # hours
-            self.channel_group_sizes = [len(ids) * input_seq_len for ids in predictors_by_channels]
-            self.other_input_size = input_size - sum(self.channel_group_sizes)
-            print(f"Other input size: {self.other_input_size}")
-            self.mlp_other = torchvision.ops.MLP(
-                in_channels=self.other_input_size,
-                hidden_channels=[hidden_other, hidden_other],
-                norm_layer=nn.LayerNorm,
-            ).to(dtype=torch.get_default_dtype())
-            self.mlp_by_channels = nn.ModuleList()
-            for channel_size, hidden_size in zip(self.channel_group_sizes, hidden_by_channels):
-                mlp_channel = torchvision.ops.MLP(
-                    in_channels=channel_size,
-                    hidden_channels=[hidden_size, hidden_size],
-                    norm_layer=nn.LayerNorm,
-                ).to(dtype=torch.get_default_dtype())
-                self.mlp_by_channels.append(mlp_channel)
-            self.final_mlp = torchvision.ops.MLP(
-                in_channels=hidden_other + sum(hidden_by_channels),
-                hidden_channels=[128, 1],
-                norm_layer=nn.LayerNorm,
-            ).to(dtype=torch.get_default_dtype())
-
-        def forward(self, x):
-            timestamp_of_prediction = x[:, :1]
-            x_other = x[:, 1 : 1 + self.other_input_size]# a few datetime features + other predictors
-            x_channels = x[:, 1 + self.other_input_size :]# channel group predictors
-            y_other = self.mlp_other(x_other)
-            y_by_channels = []
-            start_idx = 0
-            for mlp_channel, channel_size in zip(self.mlp_by_channels, self.channel_group_sizes):
-                x_channel = x_channels[:, start_idx : start_idx + channel_size]
-                y_channel = mlp_channel(x_channel)
-                y_by_channels.append(y_channel)
-                start_idx += channel_size
-            y_core = self.final_mlp(torch.cat([y_other] + y_by_channels, dim=1))
-            return torch.cat([timestamp_of_prediction, y_core], dim=1)
 
     x, _ = next(iter(train_loader))
     input_size = (
         x.shape[-1] - 1
     )  # Get the input size from the first batch, subtract 1 for the timestamp
 
-    if len(model_channel_groups) > 0:
-        model_report = {'input_size': input_size, 'model': 'MultiChannelAIFBOModel'}
-        hidden_other = 128
-        model_report['hidden_other'] = hidden_other
-        predictors_by_channels, hidden_by_channels = [], []
-        model_report['model_channel_groups'] = []
-        for desc, group_features in model_channel_groups:
-            predictors_by_channels.append(group_features)
-            if 'humidity' in desc:
-                hdim = 32
-            else:
-                hdim = 64
-            hidden_by_channels.append(hdim)
-            model_report['model_channel_groups'].append((desc, len(group_features), hdim))
-        model = MultiChannelAIFBOModel(input_size=input_size, hidden_other=hidden_other, hidden_by_channels=hidden_by_channels, predictors_by_channels=predictors_by_channels)
-    else:
-        model = SimpleAIFBOModel(input_size=input_size)
-        model_report = {'input_size': input_size, 'model': 'SimpleAIFBOModel'}
-    
+    model = SimpleAIFBOModel(input_size=input_size)
     optimizer = torch.optim.Adam(model.parameters(), lr=2.5e-4)
 
-    best_vali_loss = float("inf")
-    best_model_state_dict = None
     for epoch in range(200):
         model.train()
         cum_batch_loss_list = []
@@ -602,112 +517,38 @@ def simple_model_and_train(train_loader, vali_loader, loss_fn, model_channel_gro
             vali_loader, model, loss_fn
         )["avg_loss"]
 
-        if avg_vali_loss < best_vali_loss:
-            best_vali_loss = avg_vali_loss
-            best_model_state_dict = model.state_dict()
-
         print(
             f"Epoch: {epoch:04d}."
             f"Train Loss: {avg_train_loss_running:.5f}. "
             f"Train Loss Epoch: {avg_train_loss_epoch:.5f}. "
             f"Vali Loss: {avg_vali_loss:.5f}"
         )
-    
-    model_report['performance'] = {
-        'epochs_trained': epoch,
-        'train_loss': avg_train_loss_running.item(),
-        'train_loss_epoch': avg_train_loss_epoch.item(),
-        'vali_loss': best_vali_loss.item()
-    }
 
-    if maintain_best_model:
-        model.load_state_dict(best_model_state_dict)
-    return model, model_report
+    return model
 
 
-def run_channel_experiment(extra_channel_info=None, interactive=True, use_cooler_valves=True, use_active_setpoints=False, use_fc_room_temps=True, use_rc_room_temps=False, use_co2_concentrations=False, use_humidity_sensors=False, use_controller_building_sensors=False):
-    """
-    Without any parameters it was the entry point of the original main.py script provided by the competition hosts:
-    https://github.com/boschresearch/elias_aifbo/blob/main/main.py
-
-    Since, then I implemented a model called MultiChannelAIFBOModel (see above) that can handle multiple groups of channels as input,
-    and this function now serves as an entry point for running experiments with different extra channels added to the input data.
-
-    Args:
-        extra_channel_info: If provided, a list of tuples (channel_id, description, sensor_unit) to add as extra predictor variables to the input data.
-        interactive: If True, the function will run in interactive mode, otherwise prompting the user whether to run the model withthe provided feature setup.
-    """
-    
+if __name__ == "__main__":
     # Load raw data and prepare it into multivariate dataframes, and create dir for later outputs:
     os.makedirs(OUTPUTS_DIR, exist_ok=True)
-
-    # based on the selected feature groups, prepare the predictor variable names, and other insructions for feature engineering, model initialization etc.:
-    EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS, MODEL_CHANNEL_GROUPS, extra_ids_count = prepare_predictor_variables(
-        data_dir=f'{DATA_DIR}/kaggle_dl',
-        target_variable_name=TARGET_VARIABLE_NAME,
-        interactive=interactive,
-        use_cooler_valves=use_cooler_valves,
-        use_active_setpoints=use_active_setpoints,
-        use_co2_concentrations=use_co2_concentrations,
-        use_humidity_sensors=use_humidity_sensors,
-        use_controller_building_sensors=use_controller_building_sensors,
-        use_fc_room_temps=use_fc_room_temps,
-        use_rc_room_temps=use_rc_room_temps,
-        extra_channel_info=extra_channel_info
-    )
-    #if extra_ids_count == 0:
-    #    return
-
-    # name was shortened after C02 concentration update (AM22 channel included)
-    prepared_data_dir = f"{OUTPUTS_DIR}/useCoolerV_{use_cooler_valves}_useActiveSp_{use_active_setpoints}_useCO2_{use_co2_concentrations}_useHumidity_{use_humidity_sensors}_useCtrlBldg_{use_controller_building_sensors}_useFCRoomT_{use_fc_room_temps}_useRCRoomT_{use_rc_room_temps}"
-    if extra_channel_info is not None:
-        #prepared_data_dir += f"_extraInfo_{extra_channel_info[0]}"
-        prepared_data_dir += "_extraInfo"
-        for channel_id, _, _ in extra_channel_info:
-            prepared_data_dir += f"_{channel_id}"
-    os.makedirs(prepared_data_dir, exist_ok=True)
-    tzinfo_path = f"{prepared_data_dir}/tzinfo.pkl"
-
-    reload_start_ts = datetime.now()
     full_train_df = simple_load_and_resample_data(
         TRAIN_DATA_FILE_PATHS,
-        #generate_sample_plots=[TARGET_VARIABLE_NAME],# + EXAMPLE_PREDICTOR_VARIABLE_NAMES,
-        save_load_df=f"{OUTPUTS_DIR}/preproc_full_train_df_{YEAR}.parquet",
+        generate_sample_plots=[TARGET_VARIABLE_NAME] + EXAMPLE_PREDICTOR_VARIABLE_NAMES,
+        save_load_df=f"{OUTPUTS_DIR}/preproc_full_train_df.parquet",
     )
-
     test_input_df = simple_load_and_resample_data(
         TEST_INPUT_DATA_FILE_PATHS,
-        save_load_df=f"{OUTPUTS_DIR}/preproc_test_input_df_{YEAR}.parquet",
+        save_load_df=f"{OUTPUTS_DIR}/preproc_test_input_df.parquet",
     )
-    reload_end_ts = datetime.now()
-    reload_elapsed_mins = (reload_end_ts - reload_start_ts).total_seconds() / 60.0
-
     tzinfo = full_train_df.index.tzinfo
-    with open(tzinfo_path, "wb") as f:
-        pickle.dump(tzinfo, f)
 
-    feature_prep_start_ts = datetime.now()
     # Turn it into torch datasets for simple prediction from past to future, with simple features:
     full_train_dataset, full_train_dataset_info = simple_feature_dataset(
-        full_train_df, add_dummy_y=False, normalize=True, inspect_nans=True,
-        EXAMPLE_PREDICTOR_VARIABLE_NAMES=EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES=ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS=ROOMWISE_GROUPINGS
+        full_train_df, add_dummy_y=False, normalize=True
     )
-    
-    if YEAR > 2024:
-        test_input_dataset, _ = simple_feature_dataset(
-            test_input_df, add_dummy_y=True, normalize=full_train_dataset_info, inspect_nans=False,
-            EXAMPLE_PREDICTOR_VARIABLE_NAMES=EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES=ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS=ROOMWISE_GROUPINGS
-        )
-    else:
-        # here we have the ground truth for test input data available
-        test_input_dataset, _ = simple_feature_dataset(
-            test_input_df, add_dummy_y=False, normalize=full_train_dataset_info, inspect_nans=False,
-            EXAMPLE_PREDICTOR_VARIABLE_NAMES=EXAMPLE_PREDICTOR_VARIABLE_NAMES, ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES=ROOMWISE_ONLY_PREDICTOR_VARIABLE_NAMES, ROOMWISE_GROUPINGS=ROOMWISE_GROUPINGS
-        )
-    feature_prep_end_ts = datetime.now()
-    feature_prep_elapsed_mins = (feature_prep_end_ts - feature_prep_start_ts).total_seconds() / 60.0
+    test_input_dataset, _ = simple_feature_dataset(
+        test_input_df, add_dummy_y=True, normalize=full_train_dataset_info
+    )
 
-    training_start_ts = datetime.now()
     # Turn it into data loaders for training, validation, and submission (where submission loader differs in that
     # it has no target variable values, i.e. y):
     len_full_train_dataset = len(full_train_dataset)
@@ -727,13 +568,8 @@ def run_channel_experiment(extra_channel_info=None, interactive=True, use_cooler
 
     # Define loss function, model, and perform training:
     loss_fn = nn.MSELoss()
-    model, report = simple_model_and_train(train_loader, vali_loader, loss_fn, MODEL_CHANNEL_GROUPS, maintain_best_model=False)
-    with open(f"{prepared_data_dir}/model_report.json", "w") as f:
-        json.dump(report, f, indent=4)
-    training_end_ts = datetime.now()
-    training_elapsed_mins = (training_end_ts - training_start_ts).total_seconds() / 60.0
+    model = simple_model_and_train(train_loader, vali_loader, loss_fn)
 
-    eval_and_submission_start_ts = datetime.now()
     # Evaluate model on train, validation, and test data, create plots, and create final prediction submission
     # dataframe (with datetime annotation), and save it as submission file CSV:
     res_eval_train = simple_eval_and_submission_creation(
@@ -741,148 +577,37 @@ def run_channel_experiment(extra_channel_info=None, interactive=True, use_cooler
         model,
         loss_fn,
         generate_timeseries_prediction=True,
-        save_fig=f"{prepared_data_dir}/plot_train.png",
+        save_fig=f"{OUTPUTS_DIR}/plot_train.png",
     )
     res_eval_vali = simple_eval_and_submission_creation(
         vali_loader,
         model,
         loss_fn,
         generate_timeseries_prediction=True,
-        save_fig=f"{prepared_data_dir}/plot_vali.png",
+        save_fig=f"{OUTPUTS_DIR}/plot_vali.png",
     )
     res_eval_test_input = simple_eval_and_submission_creation(
         test_input_loader,
         model,
-        loss_fn=None,  # no loss function for test set evaluation, becsimple_feature_datasetause there is no ground truth in raw data
+        loss_fn=None,  # no loss function for test set evaluation, because there is no ground truth in raw data
         generate_timeseries_prediction=True,
-        save_fig=f"{prepared_data_dir}/plot_test.png",
+        save_fig=f"{OUTPUTS_DIR}/plot_test.png",
         create_submission_df=TEST_START_DATETIME,
     )
     test_prediction_df = res_eval_test_input["ys_pred_df"]
 
     test_prediction_df_for_csv = test_prediction_df.copy()
-    if YEAR <= 2024:
-        test_prediction_df_for_csv = test_prediction_df_for_csv.merge(
-            res_eval_test_input["ys_true_df"],
-            left_index=True,
-            right_index=True,
-            how="left",
-        )
-
     test_prediction_df_for_csv.index = test_prediction_df.index.tz_localize(tzinfo)
     test_prediction_df_for_csv.index = test_prediction_df.index.strftime(
         SUBMISSION_FILE_DATETIME_FORMAT
     )
     test_prediction_df_for_csv.index.name = "ID"
     
-    SUBMISSION_FILE_PATH = f"{prepared_data_dir}/submission.csv"
     # write the submission file that can then be uploaded to the competition page:
     test_prediction_df_for_csv.to_csv(
         SUBMISSION_FILE_PATH,
         index=True,
         quoting=csv.QUOTE_ALL,
     )
-    eval_and_submission_end_ts = datetime.now()
-    eval_and_submission_elapsed_mins = (eval_and_submission_end_ts - eval_and_submission_start_ts).total_seconds() / 60.0
-
-    print("Experiment Summary:")
-    print(f"Extra Channel Info: {extra_channel_info}")
-    print(f"Data Reload Time (mins): {reload_elapsed_mins:.2f}")
-    print(f"Feature Preparation Time (mins): {feature_prep_elapsed_mins:.2f}")
-    print(f"Training Time (mins): {training_elapsed_mins:.2f}")
-    print(f"Eval & Submission Time (mins): {eval_and_submission_elapsed_mins:.2f}")
 
     print("Done.")
-
-def run_and_eval_channels_for_2024():
-    """
-    The entry point to validate extra channel performance for 2024 June and July.
-    """
-    # load information about most common descriptions and missing room ratios for channels:
-    channel_info_fp = 'channel_groups_by_most_common_short_description.csv'
-    if not os.path.exists(channel_info_fp):
-        extract_channel_group_information(os.path.join(DATA_DIR, 'kaggle_dl'), output_fp=channel_info_fp)
-    channel_info_df = pd.read_csv(channel_info_fp)
-    
-    # some channels can be enabled or disabled with dedicated flags (e.g. see above 'use_cooler_valves' etc.)
-    excluded_channels = [
-        'AC21', #cooler valves
-        'VT03_2', #active setpoints
-        'AM21', #co2 concentration
-        'AM01',#room temp
-    ]
-    excluded_channels += ['AM45', 'AM45_1', 'AM51']#humidity sensors
-    channel_info_df = channel_info_df[~channel_info_df['channel'].isin(excluded_channels)]
-    
-    # extra channels that we want to run experiments for:    
-    selected_channels = ['AM71', 'AM66', 'AM31', 'RA31','AM71','AM111']
-    selected_channels += ['RA21', 'AC61', 'AM32', 'VQ21','AM02','AM22']
-
-    # run experiments for each selected extra channel:
-    for _, row in channel_info_df.iterrows():
-        channel_id = row['channel']
-        if not channel_id in selected_channels:
-            continue
-        short_desc = row['most_popular_short_description'].split(' (')[0]
-        missing_room_ratio = row['missing_room_ratio']
-        # extra channel info is a tuple needed for the function 'prepare_predictor_variables' (see above)
-        extra_channel_info = (channel_id, short_desc, missing_room_ratio)
-        print(extra_channel_info)
-        try:
-            run_channel_experiment(extra_channel_info=extra_channel_info, interactive=False)
-        except Exception as e:
-            print(f"Experiment with extra channel {extra_channel_info} failed with exception: {e}")
-        finally:
-            continue
-
-def train_and_make_submission_for_2025():
-    """
-    The entry point to train a model with selected extra channels and make a submission for the competition (June, July 2025).
-    """
-    channel_info_fp = 'channel_groups_by_most_common_short_description.csv'
-    if not os.path.exists(channel_info_fp):
-        extract_channel_group_information(os.path.join(DATA_DIR, 'kaggle_dl'), output_fp=channel_info_fp)
-    channel_info_df = pd.read_csv(channel_info_fp)
-    
-    selected_channels = ['AM02']
-    channel_info_df = channel_info_df[channel_info_df['channel'].isin(selected_channels)]
-    extra_channel_info = []
-    for _, row in channel_info_df.iterrows():
-        channel_id = row['channel']
-        if not channel_id in selected_channels:
-            continue
-        short_desc = row['most_popular_short_description'].split(' (')[0]
-        missing_room_ratio = row['missing_room_ratio']
-        extra_channel_info.append((channel_id, short_desc, missing_room_ratio))
-    print(extra_channel_info)
-    run_channel_experiment(extra_channel_info=extra_channel_info, interactive=True)
-
-def make_ensemble_submission_for_2025():
-    baseline_submission_fp = 'outputs_2025/useCoolerV_False_useActiveSp_False_useCO2_False_useHumidity_False_useCtrlBldg_False_useFCRoomT_False_useRCRoomT_False/submission.csv'
-    if not os.path.exists(baseline_submission_fp):
-        print("Baseline submission file not found, Run `uv run main_baseline.py` first!")
-        return
-    multichainel_submission_fp = 'outputs_2025/useCoolerV_True_useActiveSp_False_useCO2_False_useHumidity_False_useCtrlBldg_False_useFCRoomT_True_useRCRoomT_False_extraInfo_AM02/submission.csv'
-    if not os.path.exists(multichainel_submission_fp):
-        print("Multi-channel submission file not found, cannot make ensemble submission.")
-        return
-    baseline_df = pd.read_csv(baseline_submission_fp, index_col='ID')
-    multichannel_df = pd.read_csv(multichainel_submission_fp, index_col='ID')
-    #print(baseline_df.head())
-    #print(multichannel_df.head())
-    final_submission = 0.5 * baseline_df + 0.5 * multichannel_df
-    final_submission_fp = 'outputs_2025/final_submission.csv'
-    final_submission.to_csv(final_submission_fp, index=True)
-    print(f"Final submission file saved to {final_submission_fp}")
-
-if __name__ == "__main__":
-    # You can set YEAR at the top of this file to either 2024 or 2025, to run the respective code paths.
-    if YEAR == 2024:
-        run_and_eval_channels_for_2024()
-    elif YEAR == 2025:
-        #train and make submission with selected extra channels:
-        train_and_make_submission_for_2025()
-        #finally make an ensemble submission from both:
-        make_ensemble_submission_for_2025()
-    else:
-        raise ValueError("YEAR must be either 2024 or 2025.")
