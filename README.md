@@ -35,7 +35,7 @@ so that the file structure complies with the format required by the `main.py` sc
 2. Download additional data for 2024 provided by competition hosts from Zenodo, [part 1](https://zenodo.org/records/12590466), 
 [part 2](https://zenodo.org/records/14591934), and put it into the same folder `data/kaggle_dl/` so that the script can also use it. 
 3. Do `uv run main_multi_channels.py`.
-4. Once run, this produces several outputs, among others the `submission_file.csv` which can then be uploaded to the competition
+4. Once run, this produces several outputs, among others the `outputs_2025/final_submission.csv` which reflects my final submission to the challenge.
 
 Running time
 ---
@@ -44,7 +44,7 @@ For training the neural networks, I used one node from a NVIDIA A100 GPU cluster
 
 | **Runtime Component**        | **Baseline setup** | **Multichannel setup** |
 |------------------------------|--------------------|------------------------|
-| **Data Reload Time (mins)**  | 5.27               | 0.02                   |
+| **Data Reload Time (mins)**  | 5.27 (only once)   | 0.02 (reloading saved) |
 | **Feature Prep Time (mins)** | 0.27               | 21.39                  |
 | **Training Time (mins)**     | 4.65               | 8.71                   |
 | **Eval & Submission (mins)** | 0.04               | 0.06                   |

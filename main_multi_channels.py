@@ -871,11 +871,14 @@ def make_ensemble_submission_for_2025():
     #print(baseline_df.head())
     #print(multichannel_df.head())
     best_ensemble = 0.2 * multichannel_df + 0.8 * baseline_df
+    best_ensemble_fp = 'outputs_2025/submission_02_08_ensemble.csv'
+    best_ensemble.to_csv(best_ensemble_fp, index=True)
+    print(f"Ensemble submission file saved to {best_ensemble_fp}")
     best_single = multichannel_df
     final_submission = 0.5 * best_ensemble + 0.5 * best_single
-    final_submission_fp = 'outputs_2025/submission.csv'
+    final_submission_fp = 'outputs_2025/final_submission.csv'
     final_submission.to_csv(final_submission_fp, index=True)
-    print(f"Ensemble submission file saved to {final_submission_fp}")
+    print(f"Final submission file saved to {final_submission_fp}")
 
 def make_baseline_submission_for_2025():
     """
