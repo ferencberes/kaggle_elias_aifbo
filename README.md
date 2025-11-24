@@ -10,6 +10,8 @@ and to have a more efficient model to predict the state of the HVAC system three
 
 More details about the task, data, and evaluation can be found on the [competition page](https://www.kaggle.com/competitions/ai-based-modeling-for-energy-efficient-buildings/overview).
 
+Find my detailed solution report in this [PDF file](docs/fb_solution_report.pdf).
+
 Software setup
 ---
 
